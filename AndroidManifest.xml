@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.jietu.clustercast"
+    android:versionCode="14"
+    android:versionName="14.0">
+
+    <uses-sdk android:minSdkVersion="27" android:targetSdkVersion="28"/>
+
+    <!-- 前台服务保活：常驻监听车机系统发的三指手势广播 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <!-- 开机自启 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- v14 悬浮模式：仪表屏上加 TYPE_APPLICATION_OVERLAY 悬浮层（浮在原车内容上层），
+         不加这权限系统会拒 addView，自动退回搬屏模式 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+    <!-- 跟随前台取「最近前台应用」。这是普通 appops 权限，声明即可安装；
+         这台 ROM 没有授权设置页，装好后用 adb 授权一次：
+         adb shell pm grant com.jietu.clustercast android.permission.PACKAGE_USAGE_STATS -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"/>
+
+    <application
+        android:label="@string/app_name"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+        <activity android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <activity android:name=".AppPicker"
+            android:exported="false"
+            android:screenOrientation="landscape"/>
+        <service android:name=".CastService" android:exported="false"/>
+        <receiver android:name=".BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
