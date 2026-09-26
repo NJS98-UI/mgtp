@@ -57,10 +57,34 @@ public class MainActivity extends Activity implements CastService.LogSink {
     @Override protected void onCreate(Bundle b) {
         Ui.fit1050(this);
         super.onCreate(b);
+        // 全屏：透明状态栏/导航栏 + 隐藏系统栏，避免底部白条
+        getWindow().setFlags(
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
         cfg = new Cfg(this);
         allApps = loadApps();
         setContentView(buildUi());
         refresh();
+    }
+
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        }
     }
 
     @Override protected void onStart() {
@@ -113,7 +137,8 @@ public class MainActivity extends Activity implements CastService.LogSink {
                 chooseApp(r);
             }
         });
-        left.addView(grid, Ui.weighted(1, 0));
+        left.addView(grid, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         // ===== 右侧：侧边栏 =====
         LinearLayout right = new LinearLayout(this);
@@ -201,7 +226,8 @@ public class MainActivity extends Activity implements CastService.LogSink {
         tvLog.setMovementMethod(new ScrollingMovementMethod());
         svLog.addView(tvLog, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        right.addView(svLog, Ui.weighted(1, 0));
+        right.addView(svLog, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         return root;
     }
