@@ -110,61 +110,37 @@ public class MainActivity extends Activity implements CastService.LogSink {
     // ---------- 构建 ----------
 
     private View buildUi() {
-        // 根：横向分栏，左 = 应用网格，右 = 侧边栏
+        // 根：横向分栏，左 = 侧边栏，右 = 应用网格
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.HORIZONTAL);
         root.setBackground(Ui.darkWallpaper(this));
         int pad = Ui.dp(this, 12);
         root.setPadding(pad, pad, pad, pad);
 
-        // ===== 左侧：应用网格 =====
+        // ===== 左侧：侧边栏 =====
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
-        root.addView(left, Ui.weighted(2.5f, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        grid = new GridView(this);
-        grid.setNumColumns(4);
-        grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
-        grid.setHorizontalSpacing(Ui.dp(this, 10));
-        grid.setVerticalSpacing(Ui.dp(this, 10));
-        grid.setPadding(Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8));
-        grid.setBackground(Ui.darkBg(this, Ui.D_CARD, 12));
-        adapter = new AppAdapter(allApps);
-        grid.setAdapter(adapter);
-        grid.setOnItemClickListener(new android.widget.AdapterView.OnItemClickListener() {
-            @Override public void onItemClick(android.widget.AdapterView<?> p, View v,
-                    int pos, long id) {
-                ResolveInfo r = adapter.getItem(pos);
-                chooseApp(r);
-            }
-        });
-        left.addView(grid, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-
-        // ===== 右侧：侧边栏 =====
-        LinearLayout right = new LinearLayout(this);
-        right.setOrientation(LinearLayout.VERTICAL);
-        right.setBackground(Ui.darkBg(this, Ui.D_CARD, 12));
+        left.setBackground(Ui.darkBg(this, Ui.D_CARD, 12));
         int rpad = Ui.dp(this, 12);
-        right.setPadding(rpad, rpad, rpad, rpad);
-        root.addView(right, Ui.weighted(1f, ViewGroup.LayoutParams.MATCH_PARENT));
+        left.setPadding(rpad, rpad, rpad, rpad);
+        root.addView(left, Ui.weighted(1f, ViewGroup.LayoutParams.MATCH_PARENT));
 
         // 标题
         TextView title = Ui.text(this, 20, Ui.D_TEXT, Typeface.BOLD, 1);
         title.setText("冥城投屏助手");
-        right.addView(title, Ui.lw());
-        right.addView(vsp(4));
+        left.addView(title, Ui.lw());
+        left.addView(vsp(4));
 
         // 应用数量
         tvAppCount = Ui.text(this, 12, Ui.D_TEXT_SUB, Typeface.NORMAL, 1);
         tvAppCount.setText("应用列表  共 " + allApps.size() + " 个应用");
-        right.addView(tvAppCount, Ui.lw());
-        right.addView(vsp(10));
+        left.addView(tvAppCount, Ui.lw());
+        left.addView(vsp(10));
 
         // 状态文字
         tvStatus = Ui.text(this, 12, Ui.D_TEXT_SUB, Typeface.NORMAL, 2);
-        right.addView(tvStatus, Ui.lw());
-        right.addView(vsp(10));
+        left.addView(tvStatus, Ui.lw());
+        left.addView(vsp(10));
 
         // 开始投屏按钮（绿色）
         TextView btnCast = Ui.darkButton(this, "开始投屏", 15, Ui.D_GREEN, 0xFFFFFFFF);
@@ -175,8 +151,8 @@ public class MainActivity extends Activity implements CastService.LogSink {
                 s.castNow();
             }
         });
-        right.addView(btnCast, Ui.lw());
-        right.addView(vsp(8));
+        left.addView(btnCast, Ui.lw());
+        left.addView(vsp(8));
 
         // 结束投屏按钮（红色）
         TextView btnExit = Ui.darkButton(this, "结束投屏", 15, Ui.D_DANGER, 0xFFFFFFFF);
@@ -187,16 +163,16 @@ public class MainActivity extends Activity implements CastService.LogSink {
                 s.exitNow();
             }
         });
-        right.addView(btnExit, Ui.lw());
-        right.addView(vsp(8));
+        left.addView(btnExit, Ui.lw());
+        left.addView(vsp(8));
 
         // 设置按钮
         TextView btnSettings = Ui.darkButton(this, "⚙ 设置", 14, Ui.D_BTN, Ui.D_TEXT);
         Ui.click(btnSettings, new Runnable() {
             @Override public void run() { showSettingsDialog(); }
         });
-        right.addView(btnSettings, Ui.lw());
-        right.addView(vsp(12));
+        left.addView(btnSettings, Ui.lw());
+        left.addView(vsp(12));
 
         // 日志区标题行
         LinearLayout logHead = new LinearLayout(this);
@@ -214,8 +190,8 @@ public class MainActivity extends Activity implements CastService.LogSink {
             }
         });
         logHead.addView(btnClear, Ui.ww());
-        right.addView(logHead, Ui.lw());
-        right.addView(vsp(6));
+        left.addView(logHead, Ui.lw());
+        left.addView(vsp(6));
 
         // 日志区
         svLog = new ScrollView(this);
@@ -227,7 +203,31 @@ public class MainActivity extends Activity implements CastService.LogSink {
         tvLog.setMovementMethod(new ScrollingMovementMethod());
         svLog.addView(tvLog, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        right.addView(svLog, new LinearLayout.LayoutParams(
+        left.addView(svLog, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        // ===== 右侧：应用网格 =====
+        LinearLayout right = new LinearLayout(this);
+        right.setOrientation(LinearLayout.VERTICAL);
+        root.addView(right, Ui.weighted(2.5f, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        grid = new GridView(this);
+        grid.setNumColumns(4);
+        grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
+        grid.setHorizontalSpacing(Ui.dp(this, 10));
+        grid.setVerticalSpacing(Ui.dp(this, 10));
+        grid.setPadding(Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8));
+        grid.setBackground(Ui.darkBg(this, Ui.D_CARD, 12));
+        adapter = new AppAdapter(allApps);
+        grid.setAdapter(adapter);
+        grid.setOnItemClickListener(new android.widget.AdapterView.OnItemClickListener() {
+            @Override public void onItemClick(android.widget.AdapterView<?> p, View v,
+                    int pos, long id) {
+                ResolveInfo r = adapter.getItem(pos);
+                chooseApp(r);
+            }
+        });
+        right.addView(grid, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         return root;
@@ -257,7 +257,14 @@ public class MainActivity extends Activity implements CastService.LogSink {
         cfg.setTarget(r.activityInfo.packageName, r.activityInfo.name, name);
         if (cfg.followTop()) cfg.setFollowTop(false);
         adapter.notifyDataSetChanged();
-        toast("已选定：" + name);
+        // 选定后直接开始投屏，无需再点"开始投屏"
+        CastService s = CastService.inst();
+        if (s != null) {
+            s.castNow();
+            toast("已选定并投屏：" + name);
+        } else {
+            toast("已选定：" + name + "（服务启动中，稍后自动投屏）");
+        }
     }
 
     /** 一格：图标在上、名字在下。选中的蓝色高亮。 */
