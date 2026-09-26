@@ -99,7 +99,13 @@ try {
     Write-Host "[3/6] javac"
     if (Test-Path -LiteralPath $classesDir) { Remove-Item -Recurse -Force $classesDir }
     New-Item -ItemType Directory -Force -Path $classesDir | Out-Null
-    $srcs = @(Get-ChildItem -Recurse -File src -Filter *.java | ForEach-Object { $_.FullName.Substring($root.Length + 1) })
+    # EVCam（src/com/kooo）依赖 AndroidX/Material/Glide/OkHttp，本流水线 classpath 只有
+    # android.jar，编译不过；源码完整保留在仓库（res 有 evcam_compat.xml 兼容桩保证
+    # aapt2 link 通过），等以后迁 Gradle 再接入。主界面记录仪页用的是 MainActivity
+    # 自带 camera2 预览，不依赖这些类。
+    $srcs = @(Get-ChildItem -Recurse -File src -Filter *.java |
+        Where-Object { $_.FullName -notmatch '[/\\]com[/\\]kooo[/\\]' } |
+        ForEach-Object { $_.FullName.Substring($root.Length + 1) })
     $srcs += @(Get-ChildItem -Recurse -File $genDir -Filter *.java | ForEach-Object { $_.FullName.Substring($root.Length + 1) })
     & $javac -encoding UTF-8 -source 11 -target 11 -classpath $androidJar -d $classesDir $srcs
     Check-Last 'javac'

@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  aapt2 link 兼容桩（勿在运行期依赖）。
+
+  EVCam 的 res（布局/主题/菜单）引用了 AndroidX / Material 组件库里的属性与样式：
+    - CardView / ConstraintLayout / NavigationView / MaterialSwitch 等的 app: 自定义属性
+    - Theme.Material3.* / TextAppearance.AppCompat.* / Widget.Material3.* 等样式继承链
+  本工程的 build.ps1 是 aapt2 + javac + d8 纯系统流水线，classpath 只有 android.jar，
+  没有 AndroidX AAR，aapt2 link 会在这些引用上报 "attribute/style not found"。
+
+  这里按缺的名字补齐同名 attr / style 桩，仅为了让 aapt2 link 通过：
+    - attr 不声明 format，接受任意取值；
+    - style 按点号继承链逐级补齐父节点；
+  运行期不会用到：com.kooo.evcam 的类因依赖 AndroidX 未参与 javac 编译（见 build.ps1），
+  记录仪页用的是 MainActivity 自带 camera2 预览，这些资源只为通过资源链接而存在。
+-->
+<resources>
+    <!-- Material3 主题色 / 对话框按钮样式（themes.xml item 引用） -->
+    <attr name="colorPrimary" />
+    <attr name="colorPrimaryVariant" />
+    <attr name="colorOnPrimary" />
+    <attr name="colorSecondary" />
+    <attr name="colorSecondaryVariant" />
+    <attr name="colorOnSecondary" />
+    <attr name="colorSurface" />
+    <attr name="colorOnSurface" />
+    <attr name="buttonBarPositiveButtonStyle" />
+    <attr name="buttonBarNegativeButtonStyle" />
+    <attr name="buttonBarNeutralButtonStyle" />
+    <attr name="fontFamily" />
+    <attr name="itemShapeFillColor" />
+    <attr name="materialAlertDialogBodyTextStyle" />
+    <attr name="materialAlertDialogTitleTextStyle" />
+
+    <!-- CardView -->
+    <attr name="cardCornerRadius" />
+    <attr name="cardBackgroundColor" />
+    <attr name="cardElevation" />
+    <attr name="cardPreventCornerOverlap" />
+
+    <!-- ConstraintLayout -->
+    <attr name="layout_constraintWidth_percent" />
+    <attr name="layout_constraintDimensionRatio" />
+    <attr name="layout_constraintTop_toTopOf" />
+    <attr name="layout_constraintTop_toBottomOf" />
+    <attr name="layout_constraintBottom_toBottomOf" />
+    <attr name="layout_constraintBottom_toTopOf" />
+    <attr name="layout_constraintStart_toStartOf" />
+    <attr name="layout_constraintStart_toEndOf" />
+    <attr name="layout_constraintEnd_toEndOf" />
+    <attr name="layout_constraintEnd_toStartOf" />
+    <attr name="layout_constraintVertical_chainStyle" />
+    <attr name="layout_constraintHorizontal_chainStyle" />
+
+    <!-- NavigationView / 自定义导航 -->
+    <attr name="menu" />
+    <attr name="headerLayout" />
+    <attr name="itemBackground" />
+    <attr name="itemIconTint" />
+    <attr name="itemTextColor" />
+    <attr name="itemTextAppearance" />
+    <attr name="itemIconSize" />
+    <attr name="itemIconPadding" />
+    <attr name="itemHorizontalPadding" />
+    <attr name="itemVerticalPadding" />
+    <attr name="dividerInsetStart" />
+    <attr name="dividerInsetEnd" />
+    <attr name="subheaderTextAppearance" />
+    <attr name="subheaderInsetStart" />
+
+    <!-- 其它 -->
+    <attr name="cornerRadius" />
+    <attr name="tint" />
+    <attr name="colorControlNormal" />
+    <attr name="selectableItemBackground" />
+    <attr name="selectableItemBackgroundBorderless" />
+
+    <!-- 样式继承链：根节点挂到系统 Material 主题，运行期无人消费，仅满足 aapt2 link -->
+    <style name="Theme" parent="android:Theme.Material.NoActionBar" />
+    <style name="Theme.Material3" parent="Theme" />
+    <style name="Theme.Material3.DayNight" parent="Theme.Material3" />
+    <style name="Theme.Material3.DayNight.NoActionBar" parent="Theme.Material3.DayNight" />
+    <style name="Theme.Material3.Light" parent="Theme.Material3" />
+    <style name="Theme.Material3.Light.Dialog" parent="Theme.Material3.Light" />
+    <style name="Theme.Material3.Light.Dialog.Alert" parent="Theme.Material3.Light.Dialog" />
+
+    <style name="ThemeOverlay" />
+    <style name="ThemeOverlay.Material3" parent="ThemeOverlay" />
+    <style name="ThemeOverlay.Material3.MaterialAlertDialog" parent="ThemeOverlay.Material3" />
+
+    <style name="Widget" />
+    <style name="Widget.Material3" parent="Widget" />
+    <style name="Widget.Material3.Button" parent="Widget.Material3" />
+    <style name="Widget.Material3.Button.TextButton" parent="Widget.Material3.Button" />
+    <style name="Widget.Material3.Button.TextButton.Dialog" parent="Widget.Material3.Button.TextButton" />
+
+    <style name="MaterialAlertDialog" />
+    <style name="MaterialAlertDialog.Material3" parent="MaterialAlertDialog" />
+    <style name="MaterialAlertDialog.Material3.Title" parent="MaterialAlertDialog.Material3" />
+    <style name="MaterialAlertDialog.Material3.Title.Text" parent="MaterialAlertDialog.Material3.Title" />
+    <style name="MaterialAlertDialog.Material3.Body" parent="MaterialAlertDialog.Material3" />
+    <style name="MaterialAlertDialog.Material3.Body.Text" parent="MaterialAlertDialog.Material3.Body" />
+
+    <style name="TextAppearance" />
+    <style name="TextAppearance.AppCompat" parent="TextAppearance" />
+    <style name="TextAppearance.AppCompat.Body1" parent="TextAppearance.AppCompat" />
+    <style name="TextAppearance.AppCompat.Body2" parent="TextAppearance.AppCompat" />
+
+    <!-- Base.Theme.Cam 的隐式父链 -->
+    <style name="Base" />
+    <style name="Base.Theme" parent="Base" />
+</resources>
