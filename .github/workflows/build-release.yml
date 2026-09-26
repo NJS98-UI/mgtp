@@ -3,7 +3,7 @@ name: Build and Release APK
 on:
   push:
     branches:
-      - master
+      - main
     paths:
       - 'src/**'
       - 'res/**'
@@ -56,7 +56,7 @@ jobs:
           path: out/ClusterCast.apk
 
       - name: Publish GitHub Release
-        if: github.ref == 'refs/heads/master'
+        if: github.ref == 'refs/heads/main'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
