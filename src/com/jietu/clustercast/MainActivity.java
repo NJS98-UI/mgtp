@@ -109,7 +109,7 @@ public class MainActivity extends Activity implements CastService.LogSink {
     }
 
     @Override public void onBackPressed() {
-        if (settingsOverlay != null) {
+        if (inSettings) {
             closeSettingsOverlay();
             return;
         }
@@ -323,22 +323,25 @@ public class MainActivity extends Activity implements CastService.LogSink {
 
     // ---------- 设置（覆盖到应用区，不用弹窗） ----------
 
-    private View settingsOverlay = null;
+    private View settingsView = null;
+    private boolean inSettings = false;
 
     private void showSettingsOverlay() {
-        if (settingsOverlay != null) return;
+        if (inSettings) return;
 
-        // 覆盖层：占满整个右侧应用区
-        LinearLayout overlay = new LinearLayout(this);
-        overlay.setOrientation(LinearLayout.VERTICAL);
-        overlay.setGravity(Gravity.TOP);
-        overlay.setBackground(Ui.darkBg(this, Ui.D_BG, 12));
+        // 整个设置页就是一个 ScrollView，内容从顶部开始排列
+        ScrollView sv = new ScrollView(this);
+        sv.setBackground(Ui.darkBg(this, Ui.D_BG, 12));
+        sv.setFillViewport(true);
 
-        // 顶部栏：返回按钮 + 标题（固定高度，不参与滚动）
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(Ui.dp(this, 16), Ui.dp(this, 14), Ui.dp(this, 16), Ui.dp(this, 16));
+
+        // 顶部：返回按钮 + 标题
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
-        head.setPadding(Ui.dp(this, 16), Ui.dp(this, 14), Ui.dp(this, 16), Ui.dp(this, 14));
         TextView btnBack = Ui.darkButton(this, "← 返回", 14, Ui.D_BTN, Ui.D_TEXT);
         Ui.click(btnBack, new Runnable() {
             @Override public void run() { closeSettingsOverlay(); }
@@ -348,21 +351,15 @@ public class MainActivity extends Activity implements CastService.LogSink {
         TextView headTitle = Ui.text(this, 18, Ui.D_TEXT, Typeface.BOLD, 1);
         headTitle.setText("投屏设置");
         head.addView(headTitle, Ui.weighted(1, ViewGroup.LayoutParams.WRAP_CONTENT));
-        overlay.addView(head, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        body.addView(head, Ui.lw());
+        body.addView(vsp(14));
 
         // 分割线
         View divider = new View(this);
         divider.setBackgroundColor(0xFF2A3040);
-        overlay.addView(divider, new LinearLayout.LayoutParams(
+        body.addView(divider, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 1)));
-
-        // 内容区：ScrollView 占据剩余空间，可滚动
-        ScrollView sv = new ScrollView(this);
-        sv.setFillViewport(false);
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(Ui.dp(this, 16), Ui.dp(this, 16), Ui.dp(this, 16), Ui.dp(this, 16));
+        body.addView(vsp(16));
 
         // 仪表档位
         TextView lblTheme = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
@@ -451,19 +448,22 @@ public class MainActivity extends Activity implements CastService.LogSink {
 
         sv.addView(body, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        overlay.addView(sv, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        settingsOverlay = overlay;
-        rightPanel.addView(overlay, new FrameLayout.LayoutParams(
+        // 切换 rightPanel 内容：移除 grid，显示设置页
+        settingsView = sv;
+        rightPanel.removeAllViews();
+        rightPanel.addView(sv, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        inSettings = true;
     }
 
     private void closeSettingsOverlay() {
-        if (settingsOverlay != null) {
-            rightPanel.removeView(settingsOverlay);
-            settingsOverlay = null;
-        }
+        if (!inSettings) return;
+        rightPanel.removeAllViews();
+        rightPanel.addView(grid, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        settingsView = null;
+        inSettings = false;
     }
 
     // ---------- 辅助 ----------
