@@ -1,7 +1,6 @@
 package com.jietu.clustercast;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.ResolveInfo;
 import android.graphics.Typeface;
@@ -17,6 +16,7 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.AbsListView;
 import android.widget.BaseAdapter;
+import android.widget.FrameLayout;
 import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -44,6 +44,7 @@ public class MainActivity extends Activity implements CastService.LogSink {
     private ScrollView svLog;
     private GridView grid;
     private AppAdapter adapter;
+    private FrameLayout rightPanel;
     private List<ResolveInfo> allApps = new ArrayList<>();
 
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -105,6 +106,14 @@ public class MainActivity extends Activity implements CastService.LogSink {
         CastService s = CastService.inst();
         if (s != null) s.setSink(null);
         sinkBound = false;
+    }
+
+    @Override public void onBackPressed() {
+        if (settingsOverlay != null) {
+            closeSettingsOverlay();
+            return;
+        }
+        super.onBackPressed();
     }
 
     // ---------- 构建 ----------
@@ -169,7 +178,7 @@ public class MainActivity extends Activity implements CastService.LogSink {
         // 设置按钮
         TextView btnSettings = Ui.darkButton(this, "⚙ 设置", 14, Ui.D_BTN, Ui.D_TEXT);
         Ui.click(btnSettings, new Runnable() {
-            @Override public void run() { showSettingsDialog(); }
+            @Override public void run() { showSettingsOverlay(); }
         });
         left.addView(btnSettings, Ui.lw());
         left.addView(vsp(12));
@@ -206,16 +215,15 @@ public class MainActivity extends Activity implements CastService.LogSink {
         left.addView(svLog, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        // ===== 右侧：应用网格 =====
-        LinearLayout right = new LinearLayout(this);
-        right.setOrientation(LinearLayout.VERTICAL);
-        root.addView(right, Ui.weighted(2.5f, ViewGroup.LayoutParams.MATCH_PARENT));
+        // ===== 右侧：应用网格（FrameLayout 用于覆盖设置页） =====
+        rightPanel = new FrameLayout(this);
+        root.addView(rightPanel, Ui.weighted(2.5f, ViewGroup.LayoutParams.MATCH_PARENT));
 
         grid = new GridView(this);
         grid.setNumColumns(4);
         grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
-        grid.setHorizontalSpacing(Ui.dp(this, 10));
-        grid.setVerticalSpacing(Ui.dp(this, 10));
+        grid.setHorizontalSpacing(Ui.dp(this, 14));
+        grid.setVerticalSpacing(Ui.dp(this, 14));
         grid.setPadding(Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8), Ui.dp(this, 8));
         grid.setBackground(Ui.darkBg(this, Ui.D_CARD, 12));
         adapter = new AppAdapter(allApps);
@@ -227,8 +235,8 @@ public class MainActivity extends Activity implements CastService.LogSink {
                 chooseApp(r);
             }
         });
-        right.addView(grid, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        rightPanel.addView(grid, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         return root;
     }
@@ -282,8 +290,8 @@ public class MainActivity extends Activity implements CastService.LogSink {
                 cell = new LinearLayout(MainActivity.this);
                 cell.setOrientation(LinearLayout.VERTICAL);
                 cell.setGravity(Gravity.CENTER_HORIZONTAL);
-                cell.setPadding(Ui.dp(MainActivity.this, 4), Ui.dp(MainActivity.this, 10),
-                        Ui.dp(MainActivity.this, 4), Ui.dp(MainActivity.this, 10));
+                cell.setPadding(Ui.dp(MainActivity.this, 4), Ui.dp(MainActivity.this, 6),
+                        Ui.dp(MainActivity.this, 4), Ui.dp(MainActivity.this, 6));
                 ImageView iv = new ImageView(MainActivity.this);
                 cell.addView(iv, new LinearLayout.LayoutParams(
                         Ui.dp(MainActivity.this, 44), Ui.dp(MainActivity.this, 44)));
@@ -292,7 +300,7 @@ public class MainActivity extends Activity implements CastService.LogSink {
                 LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT);
-                tlp.topMargin = Ui.dp(MainActivity.this, 6);
+                tlp.topMargin = Ui.dp(MainActivity.this, 4);
                 cell.addView(t, tlp);
             }
             ResolveInfo r = items.get(pos);
@@ -303,24 +311,48 @@ public class MainActivity extends Activity implements CastService.LogSink {
             boolean selected = sel != null && sel.equals(r.activityInfo.packageName);
             cell.setBackground(Ui.darkBg(MainActivity.this,
                     selected ? Ui.D_BTN_ON : Ui.D_BTN, 10));
-            int size = Ui.dp(MainActivity.this, 100);
-            cell.setLayoutParams(new AbsListView.LayoutParams(size, size));
+            // 卡片刚好放完图标和名称：宽度填满列，高度自适应
+            cell.setLayoutParams(new AbsListView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT));
             return cell;
         }
     }
 
-    // ---------- 设置弹窗 ----------
+    // ---------- 设置（覆盖到应用区，不用弹窗） ----------
 
-    private void showSettingsDialog() {
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(Ui.dp(this, 16), Ui.dp(this, 12), Ui.dp(this, 16), Ui.dp(this, 12));
+    private View settingsOverlay = null;
+
+    private void showSettingsOverlay() {
+        if (settingsOverlay != null) return;
+
+        // 覆盖层：占满整个右侧应用区
+        LinearLayout overlay = new LinearLayout(this);
+        overlay.setOrientation(LinearLayout.VERTICAL);
+        overlay.setBackground(Ui.darkBg(this, Ui.D_BG, 12));
+        overlay.setPadding(Ui.dp(this, 16), Ui.dp(this, 12), Ui.dp(this, 16), Ui.dp(this, 12));
+
+        // 顶部：返回按钮 + 标题
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView btnBack = Ui.darkButton(this, "← 返回", 14, Ui.D_BTN, Ui.D_TEXT);
+        Ui.click(btnBack, new Runnable() {
+            @Override public void run() { closeSettingsOverlay(); }
+        });
+        head.addView(btnBack, Ui.ww());
+        head.addView(hsp(12));
+        TextView headTitle = Ui.text(this, 18, Ui.D_TEXT, Typeface.BOLD, 1);
+        headTitle.setText("设置");
+        head.addView(headTitle, Ui.weighted(1, ViewGroup.LayoutParams.WRAP_CONTENT));
+        overlay.addView(head, Ui.lw());
+        overlay.addView(vsp(14));
 
         // 仪表档位
         TextView lblTheme = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
         lblTheme.setText("仪表档位");
-        body.addView(lblTheme, Ui.lw());
-        body.addView(vsp(6));
+        overlay.addView(lblTheme, Ui.lw());
+        overlay.addView(vsp(6));
         LinearLayout themeRow = new LinearLayout(this);
         themeRow.setOrientation(LinearLayout.HORIZONTAL);
         final TextView btnNavi = Ui.darkButton(this, "导航模式", 14,
@@ -350,14 +382,14 @@ public class MainActivity extends Activity implements CastService.LogSink {
         themeRow.addView(btnNavi, Ui.ww());
         themeRow.addView(hsp(8));
         themeRow.addView(btnSimple, Ui.ww());
-        body.addView(themeRow, Ui.lw());
-        body.addView(vsp(12));
+        overlay.addView(themeRow, Ui.lw());
+        overlay.addView(vsp(12));
 
         // 跟随前台
         TextView lblFollow = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
         lblFollow.setText("跟随前台");
-        body.addView(lblFollow, Ui.lw());
-        body.addView(vsp(6));
+        overlay.addView(lblFollow, Ui.lw());
+        overlay.addView(vsp(6));
         final boolean[] follow = {cfg.followTop()};
         final TextView btnFollow = Ui.darkButton(this,
                 follow[0] ? "跟随前台：开" : "跟随前台：关", 14,
@@ -373,8 +405,8 @@ public class MainActivity extends Activity implements CastService.LogSink {
                 btnFollow.setTextColor(follow[0] ? 0xFFFFFFFF : Ui.D_TEXT);
             }
         });
-        body.addView(btnFollow, Ui.lw());
-        body.addView(vsp(12));
+        overlay.addView(btnFollow, Ui.lw());
+        overlay.addView(vsp(12));
 
         // 权限提示
         boolean topGranted = TopApp.granted(this);
@@ -383,29 +415,34 @@ public class MainActivity extends Activity implements CastService.LogSink {
         if (!topGranted || !overlayOk) {
             TextView lblPerm = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
             lblPerm.setText("权限");
-            body.addView(lblPerm, Ui.lw());
-            body.addView(vsp(6));
+            overlay.addView(lblPerm, Ui.lw());
+            overlay.addView(vsp(6));
             if (!topGranted) {
                 TextView tp = Ui.text(this, 12, 0xFFFF8080, Typeface.NORMAL, 4);
                 tp.setText("「跟随前台」需要使用情况访问权限：\n"
                         + "adb shell pm grant com.jietu.clustercast"
                         + " android.permission.PACKAGE_USAGE_STATS");
-                body.addView(tp, Ui.lw());
-                body.addView(vsp(6));
+                overlay.addView(tp, Ui.lw());
+                overlay.addView(vsp(6));
             }
             if (!overlayOk) {
                 TextView op = Ui.text(this, 12, 0xFFFF8080, Typeface.NORMAL, 4);
                 op.setText("悬浮模式需要「显示在其他应用上层」权限：\n"
                         + "adb shell appops set com.jietu.clustercast SYSTEM_ALERT_WINDOW allow");
-                body.addView(op, Ui.lw());
+                overlay.addView(op, Ui.lw());
             }
         }
 
-        new AlertDialog.Builder(this)
-                .setTitle("设置")
-                .setView(body)
-                .setPositiveButton("完成", null)
-                .show();
+        settingsOverlay = overlay;
+        rightPanel.addView(overlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void closeSettingsOverlay() {
+        if (settingsOverlay != null) {
+            rightPanel.removeView(settingsOverlay);
+            settingsOverlay = null;
+        }
     }
 
     // ---------- 辅助 ----------
