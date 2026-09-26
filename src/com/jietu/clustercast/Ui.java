@@ -366,9 +366,9 @@ public final class Ui {
             String lbl = on ? "开" : "关";
             float tw = textPaint.measureText(lbl);
             if (on) {
-                canvas.drawText(lbl, r - tw / 2, h / 2 + textPaint.textSize() / 3, textPaint);
+                canvas.drawText(lbl, r - tw / 2, h / 2 + textPaint.getTextSize() / 3, textPaint);
             } else {
-                canvas.drawText(lbl, w - r - tw / 2, h / 2 + textPaint.textSize() / 3, textPaint);
+                canvas.drawText(lbl, w - r - tw / 2, h / 2 + textPaint.getTextSize() / 3, textPaint);
             }
             // 圆点
             float knobR = h * 0.34f;
