@@ -328,16 +328,17 @@ public class MainActivity extends Activity implements CastService.LogSink {
     private void showSettingsOverlay() {
         if (settingsOverlay != null) return;
 
-        // 覆盖层：占满整个右侧应用区
+        // 覆盖层：占满整个右侧应用区，直接纵向排列
         LinearLayout overlay = new LinearLayout(this);
         overlay.setOrientation(LinearLayout.VERTICAL);
         overlay.setBackground(Ui.darkBg(this, Ui.D_BG, 12));
+        int pad = Ui.dp(this, 16);
+        overlay.setPadding(pad, Ui.dp(this, 12), pad, pad);
 
-        // 顶部栏：返回按钮 + 标题（固定在最上面）
+        // 顶部：返回按钮 + 标题
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
-        head.setPadding(Ui.dp(this, 16), Ui.dp(this, 12), Ui.dp(this, 16), Ui.dp(this, 12));
         TextView btnBack = Ui.darkButton(this, "← 返回", 14, Ui.D_BTN, Ui.D_TEXT);
         Ui.click(btnBack, new Runnable() {
             @Override public void run() { closeSettingsOverlay(); }
@@ -352,22 +353,15 @@ public class MainActivity extends Activity implements CastService.LogSink {
         // 分割线
         View divider = new View(this);
         divider.setBackgroundColor(0xFF2A3040);
-        divider.setLayoutParams(new LinearLayout.LayoutParams(
+        overlay.addView(divider, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 1)));
-        overlay.addView(divider);
-
-        // 内容区：可滚动
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(Ui.dp(this, 16), Ui.dp(this, 16), Ui.dp(this, 16), Ui.dp(this, 16));
+        overlay.addView(vsp(16));
 
         // 仪表档位
         TextView lblTheme = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
         lblTheme.setText("仪表档位");
-        body.addView(lblTheme, Ui.lw());
-        body.addView(vsp(6));
+        overlay.addView(lblTheme, Ui.lw());
+        overlay.addView(vsp(6));
         LinearLayout themeRow = new LinearLayout(this);
         themeRow.setOrientation(LinearLayout.HORIZONTAL);
         final TextView btnNavi = Ui.darkButton(this, "导航模式", 14,
@@ -397,14 +391,14 @@ public class MainActivity extends Activity implements CastService.LogSink {
         themeRow.addView(btnNavi, Ui.ww());
         themeRow.addView(hsp(8));
         themeRow.addView(btnSimple, Ui.ww());
-        body.addView(themeRow, Ui.lw());
-        body.addView(vsp(16));
+        overlay.addView(themeRow, Ui.lw());
+        overlay.addView(vsp(16));
 
         // 跟随前台
         TextView lblFollow = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
         lblFollow.setText("跟随前台");
-        body.addView(lblFollow, Ui.lw());
-        body.addView(vsp(6));
+        overlay.addView(lblFollow, Ui.lw());
+        overlay.addView(vsp(6));
         final boolean[] follow = {cfg.followTop()};
         final TextView btnFollow = Ui.darkButton(this,
                 follow[0] ? "跟随前台：开" : "跟随前台：关", 14,
@@ -420,8 +414,8 @@ public class MainActivity extends Activity implements CastService.LogSink {
                 btnFollow.setTextColor(follow[0] ? 0xFFFFFFFF : Ui.D_TEXT);
             }
         });
-        body.addView(btnFollow, Ui.lw());
-        body.addView(vsp(16));
+        overlay.addView(btnFollow, Ui.lw());
+        overlay.addView(vsp(16));
 
         // 权限提示
         boolean topGranted = TopApp.granted(this);
@@ -430,28 +424,23 @@ public class MainActivity extends Activity implements CastService.LogSink {
         if (!topGranted || !overlayOk) {
             TextView lblPerm = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
             lblPerm.setText("权限");
-            body.addView(lblPerm, Ui.lw());
-            body.addView(vsp(6));
+            overlay.addView(lblPerm, Ui.lw());
+            overlay.addView(vsp(6));
             if (!topGranted) {
                 TextView tp = Ui.text(this, 12, 0xFFFF8080, Typeface.NORMAL, 4);
                 tp.setText("「跟随前台」需要使用情况访问权限：\n"
                         + "adb shell pm grant com.jietu.clustercast"
                         + " android.permission.PACKAGE_USAGE_STATS");
-                body.addView(tp, Ui.lw());
-                body.addView(vsp(6));
+                overlay.addView(tp, Ui.lw());
+                overlay.addView(vsp(6));
             }
             if (!overlayOk) {
                 TextView op = Ui.text(this, 12, 0xFFFF8080, Typeface.NORMAL, 4);
                 op.setText("悬浮模式需要「显示在其他应用上层」权限：\n"
                         + "adb shell appops set com.jietu.clustercast SYSTEM_ALERT_WINDOW allow");
-                body.addView(op, Ui.lw());
+                overlay.addView(op, Ui.lw());
             }
         }
-
-        scroll.addView(body, new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        overlay.addView(scroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         settingsOverlay = overlay;
         rightPanel.addView(overlay, new FrameLayout.LayoutParams(
