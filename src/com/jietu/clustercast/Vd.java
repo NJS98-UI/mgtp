@@ -19,8 +19,8 @@ import dalvik.system.DexClassLoader;
  *   仪表导航区域：service=CAR_LAN, eventId=721702, Bundle{"data":VDNaviDisplayArea}
  * vdbus.jar 不在应用 classpath 上，运行时用 DexClassLoader 载入，全程反射；
  * 任何一步失败都返回真实异常描述写进界面日志，绝不假装成功。
- * 由 v5.1.0 的 Vd.java 裁剪移植：只留仪表主题 + CAR_LAN 导航四事件
- * （删掉媒体卡片、总线抓包、watchHud、360 环视）。
+ * 由 v5.1.0 的 Vd.java 裁剪移植：仪表主题 + CAR_LAN 导航四事件
+ * + HVAC / 车窗 / 尾门（cmdId 取自 yibiao extra.dump HvacID / CarSettingID）。
  */
 public class Vd {
 
@@ -76,6 +76,42 @@ public class Vd {
     public static final int THEME_CLASSIC = 2;
     public static final int THEME_NAVI = 3;
     public static final int THEME_SIMPLE = 4;
+
+    /**
+     * CAR_INFO 模块号，取自 vdbus.dump VDEventCarInfo。
+     * HVAC / 车窗 / 尾门走同一套 Bundle{"CMD_ID","VALUE"}，和仪表主题同一条 CarInfoProxy。
+     */
+    public static final int EV_HVAC = 327690;
+    public static final int EV_AVM = 327688;
+    public static final int EV_RVC = 327691;
+    public static final int EV_DVR = 327700;
+
+    /** extra.dump HvacID */
+    public static final int HVAC_STATE = 1;
+    public static final int HVAC_DUAL = 3;
+    public static final int HVAC_AUTO = 4;
+    public static final int HVAC_MODE = 6;
+    public static final int HVAC_CIRC = 8;
+    public static final int HVAC_TEMP_DRIVER = 10;
+    public static final int HVAC_FAN = 12;
+    public static final int HVAC_TEMP_COPILOT = 13;
+    public static final int HVAC_FRONT_DEFROST = 24;
+    public static final int HVAC_REAR_DEFROST = 80;
+
+    /** extra.dump CarSettingID：车窗 / 智能尾门 */
+    public static final int CMD_COMBINE_WINDOW = 175;
+    public static final int CMD_SMART_REAR_DOOR = 40;
+    public static final int CMD_REAR_DOOR_CONTROL = 92;
+
+    public static final int WIN_ALL = 0;
+    public static final int WIN_FL = 1;
+    public static final int WIN_FR = 2;
+    public static final int WIN_RL = 3;
+    public static final int WIN_RR = 4;
+    public static final int WIN_UP = 1;
+    public static final int WIN_DOWN = 2;
+    public static final int TAIL_CLOSE = 1;
+    public static final int TAIL_OPEN = 2;
 
     // VDEventCarLan（实机 dexdump 里逐个常量核对过）
     public static final int EV_NAVI_DISPLAY_TO_CLUSTER = 721699;
@@ -294,6 +330,80 @@ public class Vd {
             Log.w(TAG, "getThemeViaProxy failed: " + t);
             return -1;
         }
+    }
+
+    /**
+     * 通用 CAR_INFO 写入：module=VDEventCarInfo 模块号，cmd=HvacID/CarSettingID。
+     * 两条路径都发：A 自己拼 VDEvent，B 走 CarInfoProxy，和 setTheme 同一套。
+     */
+    public void setItem(int module, int cmd, int value) {
+        setItems(module, cmd, new int[]{value});
+    }
+
+    public void setItems(int module, int cmd, int[] v) {
+        if (v == null) return;
+        Object b = bus;
+        if (b != null) {
+            try {
+                Bundle bundle = new Bundle();
+                bundle.putInt(KEY_CMD, cmd);
+                bundle.putIntArray(KEY_VALUE, v);
+                mSet.invoke(b, evCtor.newInstance(module, bundle));
+                lastPath = lastPath | 1;
+            } catch (Throwable t) {
+                lastError = t.getClass().getSimpleName() + ": " + t.getMessage();
+                Log.w(TAG, "setItem via VDBus module=" + module + " cmd=" + cmd + " failed: " + t);
+            }
+        }
+        Object p = proxy;
+        if (p != null) {
+            try {
+                mProxySend.invoke(p, module, cmd, v);
+                lastPath = lastPath | 2;
+            } catch (Throwable t) {
+                lastError = t.getClass().getSimpleName() + ": " + t.getMessage();
+                Log.w(TAG, "setItem via CarInfoProxy module=" + module + " cmd=" + cmd + " failed: " + t);
+            }
+        }
+    }
+
+    /** 通用 CAR_INFO 读取；proxy 优先，退回 VDBus getOnce。拿不到返回 -1。 */
+    public int getItem(int module, int cmd) {
+        Object p = proxy;
+        if (p != null && mProxyGet != null) {
+            try {
+                int[] v = (int[]) mProxyGet.invoke(p, module, cmd);
+                if (v != null && v.length > 0) return v[0];
+            } catch (Throwable t) {
+                Log.w(TAG, "getItem via proxy module=" + module + " cmd=" + cmd + " failed: " + t);
+            }
+        }
+        Object b = bus;
+        if (b == null) return -1;
+        try {
+            Bundle bundle = new Bundle();
+            bundle.putInt(KEY_CMD, cmd);
+            Object r = mGetOnce.invoke(b, evCtor.newInstance(module, bundle));
+            if (r == null) return -1;
+            return first(readPayload(r));
+        } catch (Throwable t) {
+            lastError = t.getClass().getSimpleName() + ": " + t.getMessage();
+            Log.w(TAG, "getItem via VDBus module=" + module + " cmd=" + cmd + " failed: " + t);
+            return -1;
+        }
+    }
+
+    public void setHvac(int cmd, int value) { setItem(EV_HVAC, cmd, value); }
+    public int getHvac(int cmd) { return getItem(EV_HVAC, cmd); }
+
+    public void setWindow(int window, int action) {
+        if (window == WIN_ALL) setItem(EV_CAR_SETTING, CMD_COMBINE_WINDOW, action);
+        else setItems(EV_CAR_SETTING, CMD_COMBINE_WINDOW, new int[]{window, action});
+    }
+
+    public void setTailgate(int action) {
+        setItem(EV_CAR_SETTING, CMD_SMART_REAR_DOOR, action);
+        setItem(EV_CAR_SETTING, CMD_REAR_DOOR_CONTROL, action);
     }
 
     private Bundle readPayload(Object event) {

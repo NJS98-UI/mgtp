@@ -302,4 +302,82 @@ public final class Ui {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(c, 1f)));
         return v;
     }
+
+    // ===== 胶囊开关 =====
+
+    /**
+     * 胶囊（药丸）形状开关：蓝色=开，灰色=关，白色圆点滑动。
+     * 宽 50dp 高 28dp，纯 Canvas 绘制，无需 XML。
+     */
+    public static class CapsuleSwitch extends android.view.View {
+        private boolean on = false;
+        private float knobPos = 0f; // 0=关, 1=开
+        private Runnable onToggle;
+        private final android.graphics.Paint trackPaint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.Paint knobPaint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.Paint textPaint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final int colorOff = 0xFF222836;
+        private final int colorOn = 0xFF1A6FF0;
+        private final int knobColor = 0xFFFFFFFF;
+
+        public CapsuleSwitch(Context c) {
+            super(c);
+            textPaint.setTextSize(dp(c, 9));
+            textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+            setClickable(true);
+            setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { toggle(); }
+            });
+        }
+
+        public void setChecked(boolean on) {
+            this.on = on;
+            this.knobPos = on ? 1f : 0f;
+            invalidate();
+        }
+
+        public boolean isChecked() { return on; }
+
+        public void setOnToggle(Runnable r) { onToggle = r; }
+
+        public void toggle() {
+            on = !on;
+            knobPos = on ? 1f : 0f;
+            if (onToggle != null) onToggle.run();
+            invalidate();
+        }
+
+        @Override
+        protected void onMeasure(int widthSpec, int heightSpec) {
+            int w = dp(getContext(), 50);
+            int h = dp(getContext(), 28);
+            setMeasuredDimension(w, h);
+        }
+
+        @Override
+        protected void onDraw(android.graphics.Canvas canvas) {
+            int w = getWidth(), h = getHeight();
+            float r = h / 2f;
+            // 轨道
+            trackPaint.setColor(on ? colorOn : colorOff);
+            canvas.drawRoundRect(new android.graphics.RectF(0, 0, w, h), r, r, trackPaint);
+            // 文字
+            textPaint.setColor(on ? 0xCCFFFFFF : 0x66FFFFFF);
+            String lbl = on ? "开" : "关";
+            float tw = textPaint.measureText(lbl);
+            if (on) {
+                canvas.drawText(lbl, r - tw / 2, h / 2 + textPaint.getTextSize() / 3, textPaint);
+            } else {
+                canvas.drawText(lbl, w - r - tw / 2, h / 2 + textPaint.getTextSize() / 3, textPaint);
+            }
+            // 圆点
+            float knobR = h * 0.34f;
+            float knobX = r + knobPos * (w - 2 * r);
+            knobPaint.setColor(knobColor);
+            // 阴影
+            knobPaint.setShadowLayer(dp(getContext(), 1.5f), 0, dp(getContext(), 0.5f), 0x33000000);
+            canvas.drawCircle(knobX, h / 2f, knobR, knobPaint);
+            knobPaint.setShadowLayer(0, 0, 0, 0);
+        }
+    }
 }

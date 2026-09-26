@@ -2,15 +2,25 @@ package com.jietu.clustercast;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.graphics.SurfaceTexture;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
+import android.hardware.camera2.CameraCaptureSession;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraDevice;
+import android.hardware.camera2.CameraManager;
+import android.hardware.camera2.CaptureRequest;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
 import android.provider.Settings;
 import android.text.method.ScrollingMovementMethod;
 import android.view.Gravity;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -46,6 +56,25 @@ public class MainActivity extends Activity implements CastService.LogSink {
     private AppAdapter adapter;
     private FrameLayout rightPanel;
     private List<ResolveInfo> allApps = new ArrayList<>();
+
+    // 底部导航：投屏 / 空调 / 车窗 / 盲区 / 记录仪
+    private final List<TextView> navTabs = new ArrayList<>();
+    private int currentTab = 0;
+
+    // 空调页状态
+    private TextView tvHvacDriverTemp, tvHvacCopilotTemp, tvHvacFan;
+    private int hvacDriverTemp = 22, hvacCopilotTemp = 22, hvacFan = 3;
+
+    // 记录仪相机
+    private TextureView dashcamPreview;
+    private TextView dashcamStatus;
+    private SurfaceTexture dashcamST;
+    private CameraDevice dashcamCamera;
+    private CameraCaptureSession dashcamSession;
+    private HandlerThread camThread;
+    private Handler camHandler;
+    private boolean camInited = false;
+    private static final int REQ_CAM = 1001;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
@@ -119,12 +148,16 @@ public class MainActivity extends Activity implements CastService.LogSink {
     // ---------- 构建 ----------
 
     private View buildUi() {
-        // 根：横向分栏，左 = 侧边栏，右 = 应用网格
+        // 外层：竖向，上 = 横向分栏内容（weight 1），下 = 底部导航栏
+        LinearLayout outer = new LinearLayout(this);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        outer.setBackground(Ui.darkWallpaper(this));
+        int pad = Ui.dp(this, 12);
+        outer.setPadding(pad, pad, pad, pad);
+
+        // 内容根：横向分栏，左 = 侧边栏，右 = 应用网格/功能页
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.HORIZONTAL);
-        root.setBackground(Ui.darkWallpaper(this));
-        int pad = Ui.dp(this, 12);
-        root.setPadding(pad, pad, pad, pad);
 
         // ===== 左侧：侧边栏 =====
         LinearLayout left = new LinearLayout(this);
@@ -240,7 +273,71 @@ public class MainActivity extends Activity implements CastService.LogSink {
         rightPanel.addView(grid, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        return root;
+        // 横向内容占满除导航栏以外的全部高度
+        outer.addView(root, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        // ===== 底部导航栏：投屏 / 空调 / 车窗 / 盲区 / 记录仪 =====
+        LinearLayout navBar = new LinearLayout(this);
+        navBar.setOrientation(LinearLayout.HORIZONTAL);
+        navBar.setBackground(Ui.darkBg(this, Ui.D_CARD, 12));
+        int npad = Ui.dp(this, 8);
+        navBar.setPadding(npad, npad, npad, npad);
+        String[] tabNames = {"投屏", "空调", "车窗", "盲区", "记录仪"};
+        for (int i = 0; i < tabNames.length; i++) {
+            final int idx = i;
+            TextView tab = Ui.darkButton(this, tabNames[i], 14,
+                    i == currentTab ? Ui.D_BTN_ON : Ui.D_BTN,
+                    i == currentTab ? 0xFFFFFFFF : Ui.D_TEXT);
+            Ui.click(tab, new Runnable() {
+                @Override public void run() { switchTab(idx); }
+            });
+            navBar.addView(tab, Ui.weighted(1f, ViewGroup.LayoutParams.WRAP_CONTENT));
+            if (i < tabNames.length - 1) navBar.addView(hsp(8));
+            navTabs.add(tab);
+        }
+        LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        nlp.topMargin = Ui.dp(this, 10);
+        outer.addView(navBar, nlp);
+
+        return outer;
+    }
+
+    // ---------- 底部导航切换 ----------
+
+    private void switchTab(int index) {
+        currentTab = index;
+        for (int i = 0; i < navTabs.size(); i++) {
+            boolean active = (i == index);
+            navTabs.get(i).setBackground(Ui.darkBg(this, active ? Ui.D_BTN_ON : Ui.D_BTN, 10));
+            navTabs.get(i).setTextColor(active ? 0xFFFFFFFF : Ui.D_TEXT);
+        }
+        if (inSettings) { inSettings = false; settingsView = null; }
+        releaseDashcamCamera();
+        rightPanel.removeAllViews();
+        switch (index) {
+            case 1:
+                rightPanel.addView(buildAcPage(), new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                break;
+            case 2:
+                rightPanel.addView(buildWindowPage(), new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                break;
+            case 3:
+                rightPanel.addView(buildBlindSpotPage(), new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                break;
+            case 4:
+                rightPanel.addView(buildDashcamPage(), new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                break;
+            default:
+                rightPanel.addView(grid, new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                break;
+        }
     }
 
     // ---------- 应用列表 ----------
@@ -459,11 +556,9 @@ public class MainActivity extends Activity implements CastService.LogSink {
 
     private void closeSettingsOverlay() {
         if (!inSettings) return;
-        rightPanel.removeAllViews();
-        rightPanel.addView(grid, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         settingsView = null;
         inSettings = false;
+        switchTab(currentTab);
     }
 
     // ---------- 辅助 ----------
@@ -520,5 +615,519 @@ public class MainActivity extends Activity implements CastService.LogSink {
 
     private void toast(String s) {
         Toast.makeText(this, s, Toast.LENGTH_LONG).show();
+    }
+
+    // ---------- 空调页 ----------
+
+    private View buildAcPage() {
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        sv.setBackground(Ui.darkBg(this, Ui.D_CARD, 12));
+
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        int pad = Ui.dp(this, 12);
+        page.setPadding(pad, pad, pad, pad);
+
+        TextView title = Ui.text(this, 16, Ui.D_TEXT, Typeface.BOLD, 1);
+        title.setText("空调");
+        page.addView(title, Ui.lw());
+        page.addView(vsp(8));
+
+        LinearLayout hvacRow = new LinearLayout(this);
+        hvacRow.setOrientation(LinearLayout.HORIZONTAL);
+        hvacRow.addView(hvacBtn("电源", new Runnable() {
+            @Override public void run() { vdHvac(Vd.HVAC_STATE, 2); }
+        }));
+        hvacRow.addView(hsp(8));
+        hvacRow.addView(hvacBtn("AUTO", new Runnable() {
+            @Override public void run() { vdHvac(Vd.HVAC_AUTO, 2); }
+        }));
+        hvacRow.addView(hsp(8));
+        hvacRow.addView(hvacBtn("双区", new Runnable() {
+            @Override public void run() { vdHvac(Vd.HVAC_DUAL, 2); }
+        }));
+        hvacRow.addView(hsp(8));
+        hvacRow.addView(hvacBtn("内循环", new Runnable() {
+            @Override public void run() { vdHvac(Vd.HVAC_CIRC, 2); }
+        }));
+        page.addView(hvacRow, Ui.lw());
+        page.addView(vsp(8));
+
+        LinearLayout defrostRow = new LinearLayout(this);
+        defrostRow.setOrientation(LinearLayout.HORIZONTAL);
+        defrostRow.addView(hvacBtn("前除霜", new Runnable() {
+            @Override public void run() { vdHvac(Vd.HVAC_FRONT_DEFROST, 2); }
+        }));
+        defrostRow.addView(hsp(8));
+        defrostRow.addView(hvacBtn("后除霜", new Runnable() {
+            @Override public void run() { vdHvac(Vd.HVAC_REAR_DEFROST, 2); }
+        }));
+        defrostRow.addView(hsp(8));
+        defrostRow.addView(hvacBtn("关空调", new Runnable() {
+            @Override public void run() { vdHvac(Vd.HVAC_STATE, 1); }
+        }));
+        page.addView(defrostRow, Ui.lw());
+        page.addView(vsp(12));
+
+        tvHvacDriverTemp = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
+        tvHvacDriverTemp.setGravity(Gravity.CENTER);
+        tvHvacCopilotTemp = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
+        tvHvacCopilotTemp.setGravity(Gravity.CENTER);
+        tvHvacFan = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
+        tvHvacFan.setGravity(Gravity.CENTER);
+        refreshHvacLabels();
+
+        page.addView(stepperRow("主驾温度", tvHvacDriverTemp, new Runnable() {
+            @Override public void run() {
+                hvacDriverTemp = clamp(hvacDriverTemp - 1, 16, 32);
+                vdHvac(Vd.HVAC_TEMP_DRIVER, hvacDriverTemp);
+                refreshHvacLabels();
+            }
+        }, new Runnable() {
+            @Override public void run() {
+                hvacDriverTemp = clamp(hvacDriverTemp + 1, 16, 32);
+                vdHvac(Vd.HVAC_TEMP_DRIVER, hvacDriverTemp);
+                refreshHvacLabels();
+            }
+        }), Ui.lw());
+        page.addView(vsp(8));
+        page.addView(stepperRow("副驾温度", tvHvacCopilotTemp, new Runnable() {
+            @Override public void run() {
+                hvacCopilotTemp = clamp(hvacCopilotTemp - 1, 16, 32);
+                vdHvac(Vd.HVAC_TEMP_COPILOT, hvacCopilotTemp);
+                refreshHvacLabels();
+            }
+        }, new Runnable() {
+            @Override public void run() {
+                hvacCopilotTemp = clamp(hvacCopilotTemp + 1, 16, 32);
+                vdHvac(Vd.HVAC_TEMP_COPILOT, hvacCopilotTemp);
+                refreshHvacLabels();
+            }
+        }), Ui.lw());
+        page.addView(vsp(8));
+        page.addView(stepperRow("风速", tvHvacFan, new Runnable() {
+            @Override public void run() {
+                hvacFan = clamp(hvacFan - 1, 1, 8);
+                vdHvac(Vd.HVAC_FAN, hvacFan);
+                refreshHvacLabels();
+            }
+        }, new Runnable() {
+            @Override public void run() {
+                hvacFan = clamp(hvacFan + 1, 1, 8);
+                vdHvac(Vd.HVAC_FAN, hvacFan);
+                refreshHvacLabels();
+            }
+        }), Ui.lw());
+
+        sv.addView(page, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        pullHvacState();
+        return sv;
+    }
+
+    private View hvacBtn(String name, Runnable action) {
+        TextView b = Ui.darkButton(this, name, 13, Ui.D_BTN, Ui.D_TEXT);
+        Ui.click(b, action);
+        LinearLayout.LayoutParams lp = Ui.weighted(1f, ViewGroup.LayoutParams.WRAP_CONTENT);
+        b.setLayoutParams(lp);
+        return b;
+    }
+
+    private View stepperRow(String label, TextView valueTv, Runnable minus, Runnable plus) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView t = Ui.text(this, 13, Ui.D_TEXT, Typeface.NORMAL, 1);
+        t.setText(label);
+        row.addView(t, Ui.weighted(1f, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView btnMinus = Ui.darkButton(this, "－", 16, Ui.D_BTN, Ui.D_TEXT);
+        Ui.click(btnMinus, minus);
+        row.addView(btnMinus, Ui.ww());
+        row.addView(hsp(8));
+        row.addView(valueTv, Ui.ww());
+        row.addView(hsp(8));
+        TextView btnPlus = Ui.darkButton(this, "＋", 16, Ui.D_BTN, Ui.D_TEXT);
+        Ui.click(btnPlus, plus);
+        row.addView(btnPlus, Ui.ww());
+        return row;
+    }
+
+    private void refreshHvacLabels() {
+        if (tvHvacDriverTemp != null) tvHvacDriverTemp.setText(hvacDriverTemp + "℃");
+        if (tvHvacCopilotTemp != null) tvHvacCopilotTemp.setText(hvacCopilotTemp + "℃");
+        if (tvHvacFan != null) tvHvacFan.setText(String.valueOf(hvacFan));
+    }
+
+    private static int clamp(int v, int lo, int hi) {
+        return v < lo ? lo : (v > hi ? hi : v);
+    }
+
+    private void vdHvac(final int cmd, final int value) {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                Vd v = Vd.connect(MainActivity.this);
+                if (v == null || !v.ok()) {
+                    ui.post(new Runnable() {
+                        @Override public void run() { toast("空调总线未连接：" + (v == null ? "null" : v.lastError)); }
+                    });
+                    return;
+                }
+                v.setHvac(cmd, value);
+            }
+        }, "vd-hvac").start();
+    }
+
+    private void pullHvacState() {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                Vd v = Vd.connect(MainActivity.this);
+                if (v == null || !v.ok()) return;
+                final int d = v.getHvac(Vd.HVAC_TEMP_DRIVER);
+                final int c = v.getHvac(Vd.HVAC_TEMP_COPILOT);
+                final int f = v.getHvac(Vd.HVAC_FAN);
+                ui.post(new Runnable() {
+                    @Override public void run() {
+                        if (d >= 16 && d <= 32) hvacDriverTemp = d;
+                        if (c >= 16 && c <= 32) hvacCopilotTemp = c;
+                        if (f >= 1 && f <= 8) hvacFan = f;
+                        refreshHvacLabels();
+                    }
+                });
+            }
+        }, "vd-hvac-get").start();
+    }
+
+    // ---------- 车窗 / 尾门页 ----------
+
+    private View buildWindowPage() {
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        sv.setBackground(Ui.darkBg(this, Ui.D_CARD, 12));
+
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        int pad = Ui.dp(this, 12);
+        page.setPadding(pad, pad, pad, pad);
+
+        TextView title = Ui.text(this, 16, Ui.D_TEXT, Typeface.BOLD, 1);
+        title.setText("车窗");
+        page.addView(title, Ui.lw());
+        page.addView(vsp(8));
+
+        LinearLayout winAll = new LinearLayout(this);
+        winAll.setOrientation(LinearLayout.HORIZONTAL);
+        winAll.addView(hvacBtn("全车升起", new Runnable() {
+            @Override public void run() { vdWindow(Vd.WIN_ALL, Vd.WIN_UP); }
+        }));
+        winAll.addView(hsp(8));
+        winAll.addView(hvacBtn("全车降下", new Runnable() {
+            @Override public void run() { vdWindow(Vd.WIN_ALL, Vd.WIN_DOWN); }
+        }));
+        page.addView(winAll, Ui.lw());
+        page.addView(vsp(8));
+
+        page.addView(windowRow("主驾", Vd.WIN_FL), Ui.lw());
+        page.addView(vsp(6));
+        page.addView(windowRow("副驾", Vd.WIN_FR), Ui.lw());
+        page.addView(vsp(6));
+        page.addView(windowRow("左后", Vd.WIN_RL), Ui.lw());
+        page.addView(vsp(6));
+        page.addView(windowRow("右后", Vd.WIN_RR), Ui.lw());
+
+        page.addView(vsp(16));
+        TextView tailTitle = Ui.text(this, 16, Ui.D_TEXT, Typeface.BOLD, 1);
+        tailTitle.setText("尾门");
+        page.addView(tailTitle, Ui.lw());
+        page.addView(vsp(8));
+        LinearLayout tailRow = new LinearLayout(this);
+        tailRow.setOrientation(LinearLayout.HORIZONTAL);
+        tailRow.addView(hvacBtn("打开尾门", new Runnable() {
+            @Override public void run() { vdTail(Vd.TAIL_OPEN); }
+        }));
+        tailRow.addView(hsp(8));
+        tailRow.addView(hvacBtn("关闭尾门", new Runnable() {
+            @Override public void run() { vdTail(Vd.TAIL_CLOSE); }
+        }));
+        page.addView(tailRow, Ui.lw());
+
+        sv.addView(page, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return sv;
+    }
+
+    private View windowRow(String name, final int win) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView t = Ui.text(this, 13, Ui.D_TEXT, Typeface.NORMAL, 1);
+        t.setText(name);
+        row.addView(t, Ui.weighted(1f, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView up = Ui.darkButton(this, "升起", 13, Ui.D_BTN, Ui.D_TEXT);
+        Ui.click(up, new Runnable() {
+            @Override public void run() { vdWindow(win, Vd.WIN_UP); }
+        });
+        row.addView(up, Ui.ww());
+        row.addView(hsp(8));
+        TextView down = Ui.darkButton(this, "降下", 13, Ui.D_BTN, Ui.D_TEXT);
+        Ui.click(down, new Runnable() {
+            @Override public void run() { vdWindow(win, Vd.WIN_DOWN); }
+        });
+        row.addView(down, Ui.ww());
+        return row;
+    }
+
+    private void vdWindow(final int window, final int action) {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                Vd v = Vd.connect(MainActivity.this);
+                if (v == null || !v.ok()) {
+                    ui.post(new Runnable() {
+                        @Override public void run() { toast("车窗总线未连接：" + (v == null ? "null" : v.lastError)); }
+                    });
+                    return;
+                }
+                v.setWindow(window, action);
+            }
+        }, "vd-win").start();
+    }
+
+    private void vdTail(final int action) {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                Vd v = Vd.connect(MainActivity.this);
+                if (v == null || !v.ok()) {
+                    ui.post(new Runnable() {
+                        @Override public void run() { toast("尾门总线未连接：" + (v == null ? "null" : v.lastError)); }
+                    });
+                    return;
+                }
+                v.setTailgate(action);
+            }
+        }, "vd-tail").start();
+    }
+
+    // ---------- 盲区页 ----------
+
+    private View buildBlindSpotPage() {
+        LinearLayout page = Ui.darkCard(this, 12);
+        page.setGravity(Gravity.CENTER);
+        TextView t = Ui.text(this, 18, Ui.D_TEXT_SUB, Typeface.NORMAL, 2);
+        t.setGravity(Gravity.CENTER);
+        t.setText("盲区监控\n功能开发中…");
+        page.addView(t, Ui.lw());
+        return page;
+    }
+
+    // ---------- 记录仪页 ----------
+
+    private View buildDashcamPage() {
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setBackground(Ui.darkBg(this, Ui.D_CARD, 12));
+        int pad = Ui.dp(this, 12);
+        page.setPadding(pad, pad, pad, pad);
+
+        TextView title = Ui.text(this, 16, Ui.D_TEXT, Typeface.BOLD, 1);
+        title.setText("行车记录仪");
+        page.addView(title, Ui.lw());
+        page.addView(vsp(6));
+
+        dashcamStatus = Ui.text(this, 12, 0xFF8A8F98, Typeface.NORMAL, 1);
+        dashcamStatus.setText("相机：初始化…");
+        page.addView(dashcamStatus, Ui.lw());
+        page.addView(vsp(6));
+
+        dashcamPreview = new TextureView(this);
+        dashcamPreview.setBackground(Ui.darkBg(this, Ui.D_FIELD, 8));
+        page.addView(dashcamPreview, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        page.addView(vsp(10));
+
+        // 控制行：胶囊开关 + 重试
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        controls.setGravity(Gravity.CENTER_VERTICAL);
+
+        controls.addView(makeSwitchRow("录制", false, new Runnable() {
+            @Override public void run() { toast("录制功能开发中"); }
+        }));
+        controls.addView(hsp(20));
+        controls.addView(makeSwitchRow("水印", true, new Runnable() {
+            @Override public void run() { toast("水印功能开发中"); }
+        }));
+        controls.addView(hsp(20));
+        controls.addView(makeSwitchRow("循环录制", true, new Runnable() {
+            @Override public void run() { toast("循环录制功能开发中"); }
+        }));
+        controls.addView(hsp(20));
+        TextView retry = Ui.darkButton(this, "重试", 13, Ui.D_BTN, Ui.D_TEXT);
+        Ui.click(retry, new Runnable() {
+            @Override public void run() {
+                if (dashcamST != null) openDashcamCamera(dashcamST);
+                else camStatus("无可用 Surface，请切出再切回本页");
+            }
+        });
+        controls.addView(retry, Ui.ww());
+        page.addView(controls, Ui.lw());
+
+        initDashcamCamera();
+        return page;
+    }
+
+    /** 一行：标签 + 胶囊开关 */
+    private View makeSwitchRow(String label, boolean on, Runnable onToggle) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView t = Ui.text(this, 13, Ui.D_TEXT, Typeface.NORMAL, 1);
+        t.setText(label);
+        row.addView(t, Ui.ww());
+        row.addView(hsp(6));
+        Ui.CapsuleSwitch sw = new Ui.CapsuleSwitch(this);
+        sw.setChecked(on);
+        sw.setOnToggle(onToggle);
+        row.addView(sw, Ui.ww());
+        return row;
+    }
+
+    // ---------- 记录仪相机 ----------
+
+    private void initDashcamCamera() {
+        if (camInited) return;
+        camThread = new HandlerThread("dashcam-cam");
+        camThread.start();
+        camHandler = new Handler(camThread.getLooper());
+        camInited = true;
+        dashcamPreview.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+            @Override public void onSurfaceTextureAvailable(SurfaceTexture st, int w, int h) {
+                dashcamST = st;
+                openDashcamCamera(st);
+            }
+            @Override public void onSurfaceTextureSizeChanged(SurfaceTexture st, int w, int h) { }
+            @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture st) { return true; }
+            @Override public void onSurfaceTextureUpdated(SurfaceTexture st) { }
+        });
+    }
+
+    private void camStatus(final String s) {
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                if (dashcamStatus != null) dashcamStatus.setText("相机：" + s);
+            }
+        });
+    }
+
+    private static String camErr(int e) {
+        switch (e) {
+            case CameraDevice.StateCallback.ERROR_CAMERA_IN_USE: return "IN_USE(相机被占用)";
+            case CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE: return "MAX_CAMERAS_IN_USE";
+            case CameraDevice.StateCallback.ERROR_CAMERA_DISABLED: return "DISABLED(设备策略禁用)";
+            case CameraDevice.StateCallback.ERROR_CAMERA_DEVICE: return "CAMERA_DEVICE(硬件错误)";
+            case CameraDevice.StateCallback.ERROR_CAMERA_SERVICE: return "CAMERA_SERVICE";
+            default: return "ERR_" + e;
+        }
+    }
+
+    private void openDashcamCamera(final SurfaceTexture st) {
+        try {
+            if (checkSelfPermission(android.Manifest.permission.CAMERA)
+                    != PackageManager.PERMISSION_GRANTED) {
+                camStatus("无 CAMERA 权限，弹系统授权框…（拒绝的话用 adb：pm grant com.jietu.clustercast android.permission.CAMERA）");
+                requestPermissions(new String[]{android.Manifest.permission.CAMERA}, REQ_CAM);
+                return;
+            }
+            camStatus("已授权，枚举相机…");
+            CameraManager cm = (CameraManager) getSystemService(CAMERA_SERVICE);
+            String[] ids = cm.getCameraIdList();
+            if (ids.length == 0) { camStatus("无任何相机（getCameraIdList 为空）"); return; }
+            StringBuilder list = new StringBuilder();
+            String camId = ids[0];
+            Integer chosenFacing = null;
+            for (String id : ids) {
+                Integer facing = null;
+                try {
+                    facing = cm.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING);
+                } catch (Throwable ignored) { }
+                list.append(id).append('=')
+                    .append(facing == null ? "?" : facing == 0 ? "BACK" : facing == 1 ? "FRONT" : "EXT")
+                    .append(' ');
+                if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
+                    camId = id;
+                    chosenFacing = facing;
+                }
+            }
+            camStatus("相机列表[" + ids.length + "]: " + list + "，打开 " + camId
+                    + (chosenFacing != null ? "(BACK)" : "(首个)"));
+            cm.openCamera(camId, new CameraDevice.StateCallback() {
+                @Override public void onOpened(CameraDevice cam) {
+                    dashcamCamera = cam;
+                    camStatus("已打开 " + cam.getId() + "，建会话…");
+                    try {
+                        st.setDefaultBufferSize(1280, 720);
+                        Surface surface = new Surface(st);
+                        CaptureRequest.Builder req =
+                                cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+                        req.addTarget(surface);
+                        cam.createCaptureSession(java.util.Collections.singletonList(surface),
+                                new CameraCaptureSession.StateCallback() {
+                                    @Override public void onConfigured(CameraCaptureSession session) {
+                                        dashcamSession = session;
+                                        try {
+                                            session.setRepeatingRequest(req.build(), null, camHandler);
+                                            camStatus("预览中 ✓");
+                                        } catch (Throwable ex) {
+                                            camStatus("setRepeatingRequest 失败: " + ex);
+                                        }
+                                    }
+                                    @Override public void onConfigureFailed(CameraCaptureSession s) {
+                                        camStatus("会话配置失败 onConfigureFailed");
+                                    }
+                                }, camHandler);
+                    } catch (Throwable ex) {
+                        camStatus("createCaptureSession 异常: " + ex);
+                    }
+                }
+                @Override public void onDisconnected(CameraDevice cam) {
+                    camStatus("相机断开 onDisconnected");
+                    cam.close();
+                }
+                @Override public void onError(CameraDevice cam, int error) {
+                    camStatus("打开失败 onError: " + camErr(error));
+                    cam.close();
+                }
+            }, camHandler);
+        } catch (Throwable ex) {
+            camStatus("openCamera 异常: " + ex);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_CAM) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                camStatus("权限已授予，重试打开…");
+                if (dashcamST != null) openDashcamCamera(dashcamST);
+            } else {
+                camStatus("用户/系统拒绝 CAMERA 权限。可用 adb 授予：adb shell pm grant com.jietu.clustercast android.permission.CAMERA");
+            }
+        }
+    }
+
+    private void releaseDashcamCamera() {
+        try {
+            if (dashcamSession != null) { dashcamSession.close(); dashcamSession = null; }
+            if (dashcamCamera != null) { dashcamCamera.close(); dashcamCamera = null; }
+        } catch (Throwable ignored) { }
+        if (camThread != null) {
+            if (dashcamPreview != null) dashcamPreview.setSurfaceTextureListener(null);
+            dashcamST = null;
+            dashcamStatus = null;
+            camThread.quitSafely();
+            camThread = null;
+            camHandler = null;
+            camInited = false;
+        }
     }
 }
