@@ -90,7 +90,7 @@ try {
     $linkArgs = @('link', '-o', (Join-Path $outDir 'app.base.apk'), '-I', $androidJar,
         '--manifest', 'AndroidManifest.xml', '--java', $genDir,
         '--min-sdk-version', '27', '--target-sdk-version', '28',
-        '--version-code', '16', '--version-name', '16.0')
+        '--version-code', '17', '--version-name', '17.0')
     if (Test-Path -LiteralPath 'assets') { $linkArgs += @('-A', 'assets') }
     $linkArgs += (Join-Path $outDir 'res.zip')
     & $aapt2 @linkArgs

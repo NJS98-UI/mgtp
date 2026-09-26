@@ -148,12 +148,11 @@ public class MainActivity extends Activity implements CastService.LogSink {
     // ---------- 构建 ----------
 
     private View buildUi() {
-        // 外层：竖向，上 = 横向分栏内容（weight 1），下 = 底部导航栏
-        LinearLayout outer = new LinearLayout(this);
-        outer.setOrientation(LinearLayout.VERTICAL);
+        // 外层：FrameLayout（尺寸全为 EXACT，不依赖 weight 解析——
+        // 这台车机的 Window 对嵌套 weight 会把内容区量成 0 高）
+        FrameLayout outer = new FrameLayout(this);
         outer.setBackground(Ui.darkWallpaper(this));
         int pad = Ui.dp(this, 12);
-        outer.setPadding(pad, pad, pad, pad);
 
         // 内容根：横向分栏，左 = 侧边栏，右 = 应用网格/功能页
         LinearLayout root = new LinearLayout(this);
@@ -273,9 +272,15 @@ public class MainActivity extends Activity implements CastService.LogSink {
         rightPanel.addView(grid, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // 横向内容占满除导航栏以外的全部高度
-        outer.addView(root, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        // 横向内容：占满全屏，底部让出导航栏高度
+        int navH = Ui.dp(this, 58);
+        FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        clp.leftMargin = pad;
+        clp.topMargin = pad;
+        clp.rightMargin = pad;
+        clp.bottomMargin = navH + Ui.dp(this, 10);
+        outer.addView(root, clp);
 
         // ===== 底部导航栏：投屏 / 空调 / 车窗 / 盲区 / 记录仪 =====
         LinearLayout navBar = new LinearLayout(this);
@@ -289,16 +294,19 @@ public class MainActivity extends Activity implements CastService.LogSink {
             TextView tab = Ui.darkButton(this, tabNames[i], 14,
                     i == currentTab ? Ui.D_BTN_ON : Ui.D_BTN,
                     i == currentTab ? 0xFFFFFFFF : Ui.D_TEXT);
+            tab.setGravity(Gravity.CENTER);
             Ui.click(tab, new Runnable() {
                 @Override public void run() { switchTab(idx); }
             });
-            navBar.addView(tab, Ui.weighted(1f, ViewGroup.LayoutParams.WRAP_CONTENT));
+            navBar.addView(tab, Ui.weighted(1f, ViewGroup.LayoutParams.MATCH_PARENT));
             if (i < tabNames.length - 1) navBar.addView(hsp(8));
             navTabs.add(tab);
         }
-        LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        nlp.topMargin = Ui.dp(this, 10);
+        FrameLayout.LayoutParams nlp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, navH, Gravity.BOTTOM);
+        nlp.leftMargin = pad;
+        nlp.rightMargin = pad;
+        nlp.bottomMargin = pad;
         outer.addView(navBar, nlp);
 
         return outer;
