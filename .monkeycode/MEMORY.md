@@ -41,3 +41,14 @@ Entries discovered by the Agent during task execution should follow this format:
   - EVCam（src/com/kooo）依赖 AndroidX/Glide/OkHttp，被 javac 阶段显式排除（见 build.ps1 注释），但 res 完整参与 aapt2；缺的 AndroidX attr/style 桩补在 res/values/evcam_compat.xml
   - 校验资源引用要覆盖三个维度：@ref、?attr/、style parent 链，以及 themes/styles 里 `<item name="X">` 隐式 attr 引用（第四项曾漏过导致 link 失败）
   - 推送只用默认分支 main（用户明确要求），仓库 NJS98-UI/mgtp；GitHub 不支持 -o merge_request.* push options
+
+[Project Knowledge Summary]
+- Date: 2026-09-26
+- Context: 用户反馈导航栏悬在屏幕中间、所有功能页不可见后，按用户指示以 a7f38e5 重建主界面
+- Category: Workflow & Collaboration
+- Instructions:
+  - 主界面布局基准 = a7f38e5（左右分栏：左侧栏 + rightPanel 覆盖切换），该结构经实机验证可用
+  - 导航栏固定在屏幕最下方，五个 tab：投屏/空调/车窗/盲区/记录仪，点击切换 rightPanel 内容
+  - 嵌套 weight 布局曾导致导航居中、内容全空，改布局时保持外层竖向 [内容 weight1 + 底部导航] 结构
+  - 旧 main（含 EVCam 源码集成那条线）备份在 backup/old-main-8010b85 分支
+  - versionCode 已到 16，之后每次发新包要递增，否则车机上覆盖安装会失败
