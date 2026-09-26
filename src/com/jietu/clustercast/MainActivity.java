@@ -1,8 +1,11 @@
 package com.jietu.clustercast;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.pm.ResolveInfo;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -11,35 +14,40 @@ import android.text.method.ScrollingMovementMethod;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AbsListView;
+import android.widget.BaseAdapter;
+import android.widget.GridView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import java.text.Collator;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
 
 /**
  * 主屏设置页。壁纸（assets/wallpaper.png）只是这个页面的背景；
  * 投到仪表的是「自选软件」：三指左滑投屏、右滑退出。
  *
  * 页面结构（纯代码构建，无布局 XML）：
- *   · 标题行 + 「选择应用」（进 AppPicker 选投屏目标）
- *   · 状态卡：投屏目标 / 投屏状态与仪表模式 / 仪表档位（导航·默认 / 极简）/
- *     跟随前台开关 / 立即投屏 / 退出投屏 / 壁纸加载诊断
- *   · 用法卡：三指手势与 A/B 切换语义
- *   · 日志卡：服务日志实时滚动
+ *   · 左侧：右上角标题「冥城投屏助手」+ 设置图标 + 开始/结束投屏按钮
+ *   · 左侧下方：应用网格（4 列，上图标下名称），点击即选为投屏目标
+ *   · 右侧：运行日志实时滚动
  */
 public class MainActivity extends Activity implements CastService.LogSink {
 
     private Cfg cfg;
-    private TextView tvTarget;
-    private TextView tvCast;
-    private TextView btnFollow;
-    private TextView btnNavi;
-    private TextView btnSimple;
-    private View permRow;
-    private View overlayRow;
-    private TextView tvDiag;
+    private TextView tvStatus;
     private TextView tvLog;
     private ScrollView svLog;
+    private GridView grid;
+    private AppAdapter adapter;
+    private List<ResolveInfo> allApps = new ArrayList<>();
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
@@ -54,6 +62,7 @@ public class MainActivity extends Activity implements CastService.LogSink {
         Ui.fit1050(this);
         super.onCreate(b);
         cfg = new Cfg(this);
+        allApps = loadApps();
         setContentView(buildUi());
         refresh();
     }
@@ -80,90 +89,42 @@ public class MainActivity extends Activity implements CastService.LogSink {
     // ---------- 构建 ----------
 
     private View buildUi() {
+        // 根：横向分栏，左 = 应用区，右 = 日志区
         LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        root.setOrientation(LinearLayout.HORIZONTAL);
         root.setBackground(Ui.wallpaper(this));
-        int pad = Ui.dp(this, 22);
+        int pad = Ui.dp(this, 16);
         root.setPadding(pad, pad, pad, pad);
 
-        // 标题行
+        // ===== 左侧：标题 + 控制按钮 + 应用网格 =====
+        LinearLayout left = new LinearLayout(this);
+        left.setOrientation(LinearLayout.VERTICAL);
+        root.addView(left, Ui.weighted(2.2f, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // 标题行：右上角「冥城投屏助手」
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = Ui.text(this, 26, Ui.INK, Typeface.BOLD, 1);
-        title.setText("仪表投屏");
-        head.addView(title, Ui.weighted(1, ViewGroup.LayoutParams.WRAP_CONTENT));
-        TextView btnPick = Ui.button(this, "选择应用", 15, false, 16, 9, Ui.R_BTN);
-        Ui.click(btnPick, new Runnable() {
-            @Override public void run() {
-                startActivity(new Intent(MainActivity.this, AppPicker.class));
-            }
-        });
-        head.addView(btnPick, Ui.ww());
-        root.addView(head, Ui.lw());
-        root.addView(vsp(12));
+        head.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+        TextView title = Ui.text(this, 24, Ui.INK, Typeface.BOLD, 1);
+        title.setText("冥城投屏助手");
+        head.addView(title, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        left.addView(head, Ui.lw());
+        left.addView(vsp(6));
 
-        // 状态卡
-        LinearLayout card = Ui.card(this, 16);
-        tvTarget = Ui.text(this, 15, Ui.INK, Typeface.NORMAL, 2);
-        card.addView(tvTarget, Ui.lw());
-        card.addView(vsp(4));
-        tvCast = Ui.text(this, 14, Ui.INK_SUB, Typeface.NORMAL, 2);
-        card.addView(tvCast, Ui.lw());
-        tvDiag = Ui.text(this, 11, Ui.INK_FAINT, Typeface.NORMAL, 2);
-        card.addView(tvDiag, Ui.lw());
-        card.addView(vsp(10));
-        card.addView(Ui.divider(this));
-        card.addView(vsp(10));
+        // 控制行：设置图标 + 开始投屏 + 结束投屏
+        LinearLayout ctrl = new LinearLayout(this);
+        ctrl.setOrientation(LinearLayout.HORIZONTAL);
+        ctrl.setGravity(Gravity.CENTER_VERTICAL);
 
-        // 仪表档位行（v13）：默认导航模式 —— 投屏时仪表切导航主题，投的窗口盖住原车地图；
-        // 极简模式可选（极简档下原车仪表层依旧在下面，没有导航主题配合容易被压住）。
-        LinearLayout themeRow = new LinearLayout(this);
-        themeRow.setOrientation(LinearLayout.HORIZONTAL);
-        themeRow.setGravity(Gravity.CENTER_VERTICAL);
-        TextView tvTheme = Ui.text(this, 14, Ui.INK, Typeface.NORMAL, 1);
-        tvTheme.setText("仪表档位");
-        themeRow.addView(tvTheme, Ui.ww());
-        themeRow.addView(hsp(8));
-        btnNavi = Ui.button(this, "", 14, true, 14, 8, Ui.R_ONOFF);
-        Ui.click(btnNavi, new Runnable() {
-            @Override public void run() {
-                cfg.setCastTheme(Vd.THEME_NAVI);
-                restyleTheme();
-                toast("导航模式：投屏时仪表切导航主题，投的软件盖住原车地图");
-            }
+        TextView btnSettings = Ui.button(this, "⚙ 设置", 14, false, 12, 8, Ui.R_BTN);
+        Ui.click(btnSettings, new Runnable() {
+            @Override public void run() { showSettingsDialog(); }
         });
-        themeRow.addView(btnNavi, Ui.ww());
-        themeRow.addView(hsp(8));
-        btnSimple = Ui.button(this, "", 14, true, 14, 8, Ui.R_ONOFF);
-        Ui.click(btnSimple, new Runnable() {
-            @Override public void run() {
-                cfg.setCastTheme(Vd.THEME_SIMPLE);
-                restyleTheme();
-                toast("极简模式：投屏时仪表切极简主题（老行为）");
-            }
-        });
-        themeRow.addView(btnSimple, Ui.ww());
-        restyleTheme();
-        card.addView(themeRow, Ui.lw());
-        card.addView(vsp(10));
+        ctrl.addView(btnSettings, Ui.ww());
+        ctrl.addView(hsp(8));
 
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        btnFollow = Ui.button(this, "", 14, true, 14, 8, Ui.R_ONOFF);
-        restyleFollow(cfg.followTop());
-        Ui.click(btnFollow, new Runnable() {
-            @Override public void run() {
-                boolean on = !cfg.followTop();
-                cfg.setFollowTop(on);
-                restyleFollow(on);
-                toast(on ? "已开启跟随前台：三指左滑投当前前台应用"
-                        : "已关闭跟随前台：三指左滑投选定的应用");
-            }
-        });
-        row.addView(btnFollow, Ui.ww());
-        row.addView(hsp(8));
-        TextView btnCast = Ui.button(this, "立即投屏", 14, false, 14, 8, Ui.R_GREEN);
+        TextView btnCast = Ui.button(this, "开始投屏", 14, false, 16, 8, Ui.R_GREEN);
         Ui.click(btnCast, new Runnable() {
             @Override public void run() {
                 CastService s = CastService.inst();
@@ -171,9 +132,10 @@ public class MainActivity extends Activity implements CastService.LogSink {
                 s.castNow();
             }
         });
-        row.addView(btnCast, Ui.ww());
-        row.addView(hsp(8));
-        TextView btnExit = Ui.button(this, "退出投屏", 14, false, 14, 8, Ui.R_DANGER);
+        ctrl.addView(btnCast, Ui.ww());
+        ctrl.addView(hsp(8));
+
+        TextView btnExit = Ui.button(this, "结束投屏", 14, false, 16, 8, Ui.R_DANGER);
         Ui.click(btnExit, new Runnable() {
             @Override public void run() {
                 CastService s = CastService.inst();
@@ -181,74 +143,41 @@ public class MainActivity extends Activity implements CastService.LogSink {
                 s.exitNow();
             }
         });
-        row.addView(btnExit, Ui.ww());
-        card.addView(row, Ui.lw());
+        ctrl.addView(btnExit, Ui.ww());
+        ctrl.addView(hsp(8));
 
-        // 使用情况访问权限：这台 ROM 没有授权页，未授权就提示 adb 授权一次
-        permRow = new LinearLayout(this);
-        ((LinearLayout) permRow).setOrientation(LinearLayout.HORIZONTAL);
-        ((LinearLayout) permRow).setGravity(Gravity.CENTER_VERTICAL);
-        TextView tvPerm = Ui.text(this, 12, Ui.DANGER, Typeface.NORMAL, 4);
-        tvPerm.setText("「跟随前台」需要使用情况访问权限。这台车机没有授权页，电脑连一次 adb 执行：\n"
-                + "adb shell pm grant com.jietu.clustercast"
-                + " android.permission.PACKAGE_USAGE_STATS");
-        ((LinearLayout) permRow).addView(tvPerm, Ui.weighted(1, ViewGroup.LayoutParams.WRAP_CONTENT));
-        TextView btnPerm = Ui.button(this, "去授权", 13, false, 12, 7, Ui.R_BTN);
-        Ui.click(btnPerm, new Runnable() {
-            @Override public void run() {
-                if (!TopApp.request(MainActivity.this))
-                    toast("这台车机打不开授权页，请用左边那条 adb 命令授权");
+        // 状态文字
+        tvStatus = Ui.text(this, 12, Ui.INK_SUB, Typeface.NORMAL, 2);
+        ctrl.addView(tvStatus, Ui.weighted(1, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        left.addView(ctrl, Ui.lw());
+        left.addView(vsp(10));
+
+        // 应用网格：4 列，上图标下名称
+        grid = new GridView(this);
+        grid.setNumColumns(4);
+        grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
+        grid.setHorizontalSpacing(Ui.dp(this, 8));
+        grid.setVerticalSpacing(Ui.dp(this, 8));
+        grid.setPadding(Ui.dp(this, 6), Ui.dp(this, 6), Ui.dp(this, 6), Ui.dp(this, 6));
+        grid.setBackground(Ui.paint(this, Ui.R_CARD, 12));
+        adapter = new AppAdapter(allApps);
+        grid.setAdapter(adapter);
+        grid.setOnItemClickListener(new android.widget.AdapterView.OnItemClickListener() {
+            @Override public void onItemClick(android.widget.AdapterView<?> p, View v,
+                    int pos, long id) {
+                ResolveInfo r = adapter.getItem(pos);
+                chooseApp(r);
             }
         });
-        ((LinearLayout) permRow).addView(btnPerm, Ui.ww());
-        card.addView(vsp(10));
-        card.addView(permRow, Ui.lw());
+        left.addView(grid, Ui.weighted(1, 0));
 
-        // 悬浮窗权限（v14）：悬浮模式需要「显示在其他应用上层」；没给也能投，自动退回搬屏模式
-        overlayRow = new LinearLayout(this);
-        ((LinearLayout) overlayRow).setOrientation(LinearLayout.HORIZONTAL);
-        ((LinearLayout) overlayRow).setGravity(Gravity.CENTER_VERTICAL);
-        TextView tvOverlay = Ui.text(this, 12, Ui.DANGER, Typeface.NORMAL, 4);
-        tvOverlay.setText("悬浮模式需要「显示在其他应用上层」权限。没给也能投（自动退回搬屏、临时禁用高德）。授权页打不开就用 adb：\n"
-                + "adb shell appops set com.jietu.clustercast SYSTEM_ALERT_WINDOW allow");
-        ((LinearLayout) overlayRow).addView(tvOverlay, Ui.weighted(1, ViewGroup.LayoutParams.WRAP_CONTENT));
-        TextView btnOverlay = Ui.button(this, "去授权", 13, false, 12, 7, Ui.R_BTN);
-        Ui.click(btnOverlay, new Runnable() {
-            @Override public void run() {
-                if (!ClusterOverlay.requestPermission(MainActivity.this))
-                    toast("这台车机打不开授权页，请用左边那条 adb 命令授权");
-            }
-        });
-        ((LinearLayout) overlayRow).addView(btnOverlay, Ui.ww());
-        card.addView(vsp(10));
-        card.addView(overlayRow, Ui.lw());
-        root.addView(card, Ui.lw());
-        root.addView(vsp(12));
+        // ===== 右侧：日志区 =====
+        LinearLayout right = new LinearLayout(this);
+        right.setOrientation(LinearLayout.VERTICAL);
+        root.addView(right, Ui.weighted(1f, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // 用法卡
-        LinearLayout tips = Ui.card(this, 16);
-        TextView tt = Ui.text(this, 14, Ui.INK, Typeface.BOLD, 1);
-        tt.setText("用法");
-        tips.addView(tt, Ui.lw());
-        tips.addView(vsp(6));
-        String[] lines = {
-                "· 三指左滑＝投屏，三指右滑＝退出",
-                "· 悬浮模式：投的软件浮在仪表原车内容上层，原车高德照常跑，主屏随便用",
-                "· 投着 A 时在主屏打开 B 再左滑：B 上仪表，A 留在仪表后台，可在主屏再打开",
-                "· 「选择应用」选定后自动关闭跟随前台，左滑投的就是选定的软件",
-                "· 悬浮失败自动退回搬屏模式（投屏期间临时禁用原车高德，退出自动恢复）",
-        };
-        for (String ln : lines) {
-            TextView t = Ui.text(this, 12.5f, Ui.INK_SUB, Typeface.NORMAL, 2);
-            t.setText(ln);
-            tips.addView(t, Ui.lw());
-            tips.addView(vsp(3));
-        }
-        root.addView(tips, Ui.lw());
-        root.addView(vsp(12));
-
-        // 日志卡
-        LinearLayout logCard = Ui.card(this, 16);
+        LinearLayout logCard = Ui.card(this, 12);
         TextView lt = Ui.text(this, 13, Ui.INK_SUB, Typeface.BOLD, 1);
         lt.setText("运行日志");
         logCard.addView(lt, Ui.lw());
@@ -263,22 +192,173 @@ public class MainActivity extends Activity implements CastService.LogSink {
         svLog.addView(tvLog, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         logCard.addView(svLog, Ui.weighted(1, 0));
-        root.addView(logCard, Ui.weighted(1, 0));
+        right.addView(logCard, Ui.weighted(1, 0));
+
         return root;
     }
 
-    private void restyleFollow(boolean on) {
-        Ui.restyle(btnFollow, this, on ? "跟随前台：开" : "跟随前台：关", on, Ui.R_ONOFF);
+    // ---------- 应用列表 ----------
+
+    private List<ResolveInfo> loadApps() {
+        Intent probe = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+        List<ResolveInfo> rs = getPackageManager().queryIntentActivities(probe, 0);
+        final ArrayList<ResolveInfo> out = new ArrayList<>();
+        for (ResolveInfo r : rs)
+            if (!r.activityInfo.packageName.equals(getPackageName())) out.add(r);
+        final Collator coll = Collator.getInstance(Locale.CHINA);
+        Collections.sort(out, new Comparator<ResolveInfo>() {
+            @Override public int compare(ResolveInfo x, ResolveInfo y) {
+                return coll.compare(x.loadLabel(getPackageManager()).toString(),
+                        y.loadLabel(getPackageManager()).toString());
+            }
+        });
+        return out;
     }
 
-    /** v13：档位按钮高亮 —— 选中的一档亮蓝，另一档白底。 */
-    private void restyleTheme() {
-        boolean navi = cfg.castTheme() == Vd.THEME_NAVI;
-        Ui.restyle(btnNavi, this, "导航模式", navi, Ui.R_ONOFF);
-        Ui.restyle(btnSimple, this, "极简模式", !navi, Ui.R_ONOFF);
+    private void chooseApp(ResolveInfo r) {
+        android.content.pm.ApplicationInfo ai = r.activityInfo.applicationInfo;
+        String name = getPackageManager().getApplicationLabel(ai).toString();
+        cfg.setTarget(r.activityInfo.packageName, r.activityInfo.name, name);
+        // 选定应用后自动关闭跟随前台，让选择生效
+        if (cfg.followTop()) cfg.setFollowTop(false);
+        adapter.notifyDataSetChanged();
+        toast("已选定：" + name);
     }
 
-    /** 竖向间隔（自身带 LayoutParams，直接 addView 即可）。 */
+    /** 一格：图标在上、名字在下。选中的高亮。 */
+    private class AppAdapter extends BaseAdapter {
+        private final List<ResolveInfo> items;
+        AppAdapter(List<ResolveInfo> l) { items = l; }
+        @Override public int getCount() { return items.size(); }
+        @Override public ResolveInfo getItem(int pos) { return items.get(pos); }
+        @Override public long getItemId(int pos) { return pos; }
+
+        @Override public View getView(int pos, View cv, ViewGroup parent) {
+            LinearLayout cell;
+            if (cv instanceof LinearLayout) cell = (LinearLayout) cv;
+            else {
+                cell = new LinearLayout(MainActivity.this);
+                cell.setOrientation(LinearLayout.VERTICAL);
+                cell.setGravity(Gravity.CENTER_HORIZONTAL);
+                cell.setPadding(Ui.dp(MainActivity.this, 4), Ui.dp(MainActivity.this, 8),
+                        Ui.dp(MainActivity.this, 4), Ui.dp(MainActivity.this, 8));
+                ImageView iv = new ImageView(MainActivity.this);
+                cell.addView(iv, new LinearLayout.LayoutParams(
+                        Ui.dp(MainActivity.this, 42), Ui.dp(MainActivity.this, 42)));
+                TextView t = Ui.text(MainActivity.this, 11, Ui.INK, Typeface.NORMAL, 1);
+                t.setGravity(Gravity.CENTER);
+                LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT);
+                tlp.topMargin = Ui.dp(MainActivity.this, 5);
+                cell.addView(t, tlp);
+            }
+            ResolveInfo r = items.get(pos);
+            Drawable icon = r.loadIcon(getPackageManager());
+            ((ImageView) cell.getChildAt(0)).setImageDrawable(icon);
+            ((TextView) cell.getChildAt(1)).setText(r.loadLabel(getPackageManager()).toString());
+            // 选中高亮
+            String sel = cfg.pkg();
+            boolean selected = sel != null && sel.equals(r.activityInfo.packageName);
+            cell.setBackground(Ui.paint(MainActivity.this,
+                    selected ? Ui.R_BTN_ON : Ui.R_BTN, 10));
+            int size = Ui.dp(MainActivity.this, 96);
+            cell.setLayoutParams(new AbsListView.LayoutParams(size, size));
+            return cell;
+        }
+    }
+
+    // ---------- 设置弹窗 ----------
+
+    private void showSettingsDialog() {
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(Ui.dp(this, 16), Ui.dp(this, 12), Ui.dp(this, 16), Ui.dp(this, 12));
+
+        // 仪表档位
+        TextView lblTheme = Ui.text(this, 14, Ui.INK, Typeface.BOLD, 1);
+        lblTheme.setText("仪表档位");
+        body.addView(lblTheme, Ui.lw());
+        body.addView(vsp(6));
+        LinearLayout themeRow = new LinearLayout(this);
+        themeRow.setOrientation(LinearLayout.HORIZONTAL);
+        final TextView btnNavi = Ui.button(this, "导航模式", 14,
+                cfg.castTheme() == Vd.THEME_NAVI, 14, 8, Ui.R_ONOFF);
+        final TextView btnSimple = Ui.button(this, "极简模式", 14,
+                cfg.castTheme() == Vd.THEME_SIMPLE, 14, 8, Ui.R_ONOFF);
+        Ui.click(btnNavi, new Runnable() {
+            @Override public void run() {
+                cfg.setCastTheme(Vd.THEME_NAVI);
+                Ui.restyle(btnNavi, MainActivity.this, "导航模式", true, Ui.R_ONOFF);
+                Ui.restyle(btnSimple, MainActivity.this, "极简模式", false, Ui.R_ONOFF);
+            }
+        });
+        Ui.click(btnSimple, new Runnable() {
+            @Override public void run() {
+                cfg.setCastTheme(Vd.THEME_SIMPLE);
+                Ui.restyle(btnNavi, MainActivity.this, "导航模式", false, Ui.R_ONOFF);
+                Ui.restyle(btnSimple, MainActivity.this, "极简模式", true, Ui.R_ONOFF);
+            }
+        });
+        themeRow.addView(btnNavi, Ui.ww());
+        themeRow.addView(hsp(8));
+        themeRow.addView(btnSimple, Ui.ww());
+        body.addView(themeRow, Ui.lw());
+        body.addView(vsp(12));
+
+        // 跟随前台
+        TextView lblFollow = Ui.text(this, 14, Ui.INK, Typeface.BOLD, 1);
+        lblFollow.setText("跟随前台");
+        body.addView(lblFollow, Ui.lw());
+        body.addView(vsp(6));
+        final TextView btnFollow = Ui.button(this,
+                cfg.followTop() ? "跟随前台：开" : "跟随前台：关", 14,
+                cfg.followTop(), 14, 8, Ui.R_ONOFF);
+        Ui.click(btnFollow, new Runnable() {
+            @Override public void run() {
+                boolean on = !cfg.followTop();
+                cfg.setFollowTop(on);
+                Ui.restyle(btnFollow, MainActivity.this,
+                        on ? "跟随前台：开" : "跟随前台：关", on, Ui.R_ONOFF);
+            }
+        });
+        body.addView(btnFollow, Ui.lw());
+        body.addView(vsp(12));
+
+        // 权限提示
+        boolean topGranted = TopApp.granted(this);
+        boolean overlayOk;
+        try { overlayOk = Settings.canDrawOverlays(this); } catch (Throwable t) { overlayOk = true; }
+        if (!topGranted || !overlayOk) {
+            TextView lblPerm = Ui.text(this, 14, Ui.INK, Typeface.BOLD, 1);
+            lblPerm.setText("权限");
+            body.addView(lblPerm, Ui.lw());
+            body.addView(vsp(6));
+            if (!topGranted) {
+                TextView tp = Ui.text(this, 12, Ui.DANGER, Typeface.NORMAL, 4);
+                tp.setText("「跟随前台」需要使用情况访问权限：\n"
+                        + "adb shell pm grant com.jietu.clustercast"
+                        + " android.permission.PACKAGE_USAGE_STATS");
+                body.addView(tp, Ui.lw());
+                body.addView(vsp(6));
+            }
+            if (!overlayOk) {
+                TextView op = Ui.text(this, 12, Ui.DANGER, Typeface.NORMAL, 4);
+                op.setText("悬浮模式需要「显示在其他应用上层」权限：\n"
+                        + "adb shell appops set com.jietu.clustercast SYSTEM_ALERT_WINDOW allow");
+                body.addView(op, Ui.lw());
+            }
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("设置")
+                .setView(body)
+                .setPositiveButton("完成", null)
+                .show();
+    }
+
+    // ---------- 辅助 ----------
+
     private View vsp(int dpH) {
         View v = new View(this);
         v.setLayoutParams(new LinearLayout.LayoutParams(
@@ -286,7 +366,6 @@ public class MainActivity extends Activity implements CastService.LogSink {
         return v;
     }
 
-    /** 横向间隔。 */
     private View hsp(int dpW) {
         View v = new View(this);
         v.setLayoutParams(new LinearLayout.LayoutParams(
@@ -305,32 +384,22 @@ public class MainActivity extends Activity implements CastService.LogSink {
         String lbl = cfg.label();
         String pkg = cfg.pkg();
         String target = lbl != null ? lbl : (pkg != null ? pkg : null);
-        tvTarget.setText("投屏目标：" + (target != null ? target
-                : "未选择（三指左滑时投当前前台应用）"));
-
         if (s != null) {
             String cp = s.castingPkg();
             if (cp != null) {
-                tvCast.setText("正在投屏：" + s.label(cp)
-                        + "   仪表模式：" + themeName(s.themeSeen()));
-                tvCast.setTextColor(Ui.GREEN);
+                tvStatus.setText("正在投屏：" + s.label(cp)
+                        + "   目标：" + (target != null ? target : "未选"));
+                tvStatus.setTextColor(Ui.GREEN);
             } else {
-                tvCast.setText("未在投屏   仪表模式：" + themeName(s.themeSeen()));
-                tvCast.setTextColor(Ui.INK_SUB);
+                tvStatus.setText("目标：" + (target != null ? target : "未选择（三指左滑投前台）"));
+                tvStatus.setTextColor(Ui.INK_SUB);
             }
         } else {
-            tvCast.setText("服务未启动");
-            tvCast.setTextColor(Ui.INK_SUB);
+            tvStatus.setText("服务未启动");
+            tvStatus.setTextColor(Ui.INK_SUB);
         }
-        permRow.setVisibility(TopApp.granted(this) ? View.GONE : View.VISIBLE);
-        boolean overlayOk;
-        try { overlayOk = Settings.canDrawOverlays(this); } catch (Throwable t) { overlayOk = true; }
-        overlayRow.setVisibility(overlayOk ? View.GONE : View.VISIBLE);
-        tvDiag.setText("背景图：" + Ui.wallpaperDiag);
-    }
-
-    private static String themeName(int t) {
-        return t >= 0 ? Vd.themeName(t) : "未知";
+        // 选中态可能在设置弹窗里改了跟随前台，刷新网格高亮
+        if (adapter != null) adapter.notifyDataSetChanged();
     }
 
     @Override public void onLog(String s) {
