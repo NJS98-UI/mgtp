@@ -1,29 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     package="com.jietu.clustercast"
-    android:versionCode="14"
-    android:versionName="14.0">
+    android:versionCode="15"
+    android:versionName="15.0">
 
     <uses-sdk android:minSdkVersion="27" android:targetSdkVersion="28"/>
 
-    <!-- 前台服务保活：常驻监听车机系统发的三指手势广播 -->
+    <!-- 投屏 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <!-- 开机自启 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
-    <!-- v14 悬浮模式：仪表屏上加 TYPE_APPLICATION_OVERLAY 悬浮层（浮在原车内容上层），
-         不加这权限系统会拒 addView，自动退回搬屏模式 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
-    <!-- 跟随前台取「最近前台应用」。这是普通 appops 权限，声明即可安装；
-         这台 ROM 没有授权设置页，装好后用 adb 授权一次：
-         adb shell pm grant com.jietu.clustercast android.permission.PACKAGE_USAGE_STATS -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"/>
+
+    <!-- 记录仪 EVCam -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <uses-feature android:name="android.hardware.camera.external" android:required="false"/>
+    <uses-feature android:name="android.hardware.usb.host" android:required="false"/>
 
     <application
         android:label="@string/app_name"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:theme="@android:style/Theme.Material.NoActionBar"
+        android:requestLegacyExternalStorage="true"
+        android:hardwareAccelerated="true">
+
+        <!-- 投屏助手 -->
         <activity android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
@@ -42,5 +56,70 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
             </intent-filter>
         </receiver>
+
+        <!-- EVCam 记录仪 -->
+        <activity android:name="com.kooo.evcam.MainActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden"/>
+        <activity android:name="com.kooo.evcam.LogcatViewerActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"/>
+        <activity android:name="com.kooo.evcam.PhotoViewerActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"/>
+        <activity android:name="com.kooo.evcam.VideoPlayerActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"/>
+        <activity android:name="com.kooo.evcam.TransparentBootActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
+
+        <service android:name="com.kooo.evcam.service.CameraRecordingService"
+            android:exported="false"
+            android:foregroundServiceType="camera"/>
+        <service android:name="com.kooo.evcam.CameraForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="camera"/>
+        <service android:name="com.kooo.evcam.BlindSpotService"
+            android:exported="false"
+            android:foregroundServiceType="camera"/>
+        <service android:name="com.kooo.evcam.service.BlindSpotOverlayService"
+            android:exported="false"/>
+        <service android:name="com.kooo.evcam.service.RecordingFloatingService"
+            android:exported="false"/>
+        <service android:name="com.kooo.evcam.FloatingWindowService"
+            android:exported="false"/>
+        <service android:name="com.kooo.evcam.KeepAliveProvider"
+            android:exported="false"/>
+        <service android:name="com.kooo.evcam.KeepAliveAccessibilityService"
+            android:exported="false"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService"/>
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config"/>
+        </service>
+
+        <receiver android:name="com.kooo.evcam.BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
+        <receiver android:name="com.kooo.evcam.KeepAliveReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SCREEN_ON"/>
+                <action android:name="android.intent.action.SCREEN_OFF"/>
+                <action android:name="android.intent.action.ACTION_POWER_CONNECTED"/>
+                <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED"/>
+                <action android:name="android.media.action.TIME_TICK"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- FileProvider 用 android.support 移除，EVCam 需要时可后续添加 -->
     </application>
 </manifest>

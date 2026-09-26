@@ -274,7 +274,6 @@ public class MainActivity extends Activity implements CastService.LogSink {
         navBar.setPadding(npad, npad, npad, npad);
         root.addView(navBar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(vsp(0));
 
         String[] tabNames = {"投屏", "空调", "盲区", "记录仪"};
         for (int i = 0; i < tabNames.length; i++) {
@@ -302,7 +301,7 @@ public class MainActivity extends Activity implements CastService.LogSink {
             navTabs.get(i).setBackground(Ui.darkBg(this, active ? Ui.D_BTN_ON : Ui.D_BTN, 10));
             navTabs.get(i).setTextColor(active ? 0xFFFFFFFF : Ui.D_TEXT);
         }
-        if (inSettings) closeSettingsOverlay();
+        if (inSettings) { closeSettingsOverlay(); return; }
         releaseDashcamCamera();
         rightPanel.removeAllViews();
         switch (index) {
@@ -319,10 +318,38 @@ public class MainActivity extends Activity implements CastService.LogSink {
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 break;
             case 3:
-                rightPanel.addView(buildDashcamPage(), new FrameLayout.LayoutParams(
+                // 记录仪：启动 EVCam MainActivity
+                try {
+                    Intent evcam = new Intent();
+                    evcam.setClassName("com.jietu.clustercast", "com.kooo.evcam.MainActivity");
+                    evcam.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(evcam);
+                } catch (Throwable e) {
+                    toast("记录仪启动失败：" + e.getMessage());
+                }
+                // 切回投屏 tab（不留在空页面）
+                currentTab = 0;
+                for (int i = 0; i < navTabs.size(); i++) {
+                    boolean active = (i == 0);
+                    navTabs.get(i).setBackground(Ui.darkBg(this, active ? Ui.D_BTN_ON : Ui.D_BTN, 10));
+                    navTabs.get(i).setTextColor(active ? 0xFFFFFFFF : Ui.D_TEXT);
+                }
+                rightPanel.addView(grid, new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 break;
         }
+    }
+
+    private void switchTabBack(int index) {
+        currentTab = index;
+        for (int i = 0; i < navTabs.size(); i++) {
+            boolean active = (i == index);
+            navTabs.get(i).setBackground(Ui.darkBg(this, active ? Ui.D_BTN_ON : Ui.D_BTN, 10));
+            navTabs.get(i).setTextColor(active ? 0xFFFFFFFF : Ui.D_TEXT);
+        }
+        rightPanel.removeAllViews();
+        rightPanel.addView(grid, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
     // ---------- 空调页 ----------
