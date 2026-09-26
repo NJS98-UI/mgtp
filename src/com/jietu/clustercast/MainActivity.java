@@ -64,11 +64,14 @@ public class MainActivity extends Activity implements CastService.LogSink {
 
     // 记录仪
     private TextureView dashcamPreview;
+    private TextView dashcamStatus;
+    private android.graphics.SurfaceTexture dashcamST;
     private CameraDevice dashcamCamera;
     private CameraCaptureSession dashcamSession;
     private HandlerThread camThread;
     private Handler camHandler;
     private boolean camInited = false;
+    private static final int REQ_CAM = 1001;
 
     // 空调页回读显示
     private TextView tvHvacDriverTemp;
@@ -642,7 +645,12 @@ public class MainActivity extends Activity implements CastService.LogSink {
         TextView title = Ui.text(this, 16, Ui.D_TEXT, Typeface.BOLD, 1);
         title.setText("行车记录仪");
         page.addView(title, Ui.lw());
-        page.addView(vsp(10));
+        page.addView(vsp(6));
+
+        dashcamStatus = Ui.text(this, 12, 0xFF8A8F98, Typeface.NORMAL, 1);
+        dashcamStatus.setText("相机：初始化…");
+        page.addView(dashcamStatus, Ui.lw());
+        page.addView(vsp(6));
 
         dashcamPreview = new TextureView(this);
         dashcamPreview.setBackground(Ui.darkBg(this, Ui.D_FIELD, 8));
@@ -666,6 +674,15 @@ public class MainActivity extends Activity implements CastService.LogSink {
         controls.addView(makeSwitchRow("循环录制", true, new Runnable() {
             @Override public void run() { toast("循环录制功能开发中"); }
         }));
+        controls.addView(hsp(20));
+        TextView retry = Ui.darkButton(this, "重试", 13, Ui.D_BTN, Ui.D_TEXT);
+        Ui.click(retry, new Runnable() {
+            @Override public void run() {
+                if (dashcamST != null) openDashcamCamera(dashcamST);
+                else camStatus("无可用 Surface，请切出再切回本页");
+            }
+        });
+        controls.addView(retry, Ui.ww());
         page.addView(controls, Ui.lw());
 
         initDashcamCamera();
@@ -698,6 +715,7 @@ public class MainActivity extends Activity implements CastService.LogSink {
         camInited = true;
         dashcamPreview.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override public void onSurfaceTextureAvailable(SurfaceTexture st, int w, int h) {
+                dashcamST = st;
                 openDashcamCamera(st);
             }
             @Override public void onSurfaceTextureSizeChanged(SurfaceTexture st, int w, int h) { }
@@ -706,34 +724,59 @@ public class MainActivity extends Activity implements CastService.LogSink {
         });
     }
 
+    private void camStatus(final String s) {
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                if (dashcamStatus != null) dashcamStatus.setText("相机：" + s);
+            }
+        });
+    }
+
+    private static String camErr(int e) {
+        switch (e) {
+            case CameraDevice.StateCallback.ERROR_CAMERA_IN_USE: return "IN_USE(相机被占用)";
+            case CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE: return "MAX_CAMERAS_IN_USE";
+            case CameraDevice.StateCallback.ERROR_CAMERA_DISABLED: return "DISABLED(设备策略禁用)";
+            case CameraDevice.StateCallback.ERROR_CAMERA_DEVICE: return "CAMERA_DEVICE(硬件错误)";
+            case CameraDevice.StateCallback.ERROR_CAMERA_SERVICE: return "CAMERA_SERVICE";
+            default: return "ERR_" + e;
+        }
+    }
+
     private void openDashcamCamera(final SurfaceTexture st) {
         try {
             if (checkSelfPermission(android.Manifest.permission.CAMERA)
                     != PackageManager.PERMISSION_GRANTED) {
-                runOnUiThread(new Runnable() {
-                    @Override public void run() {
-                        toast("需要摄像头权限：\nadb shell pm grant com.jietu.clustercast android.permission.CAMERA");
-                    }
-                });
+                camStatus("无 CAMERA 权限，弹系统授权框…（拒绝的话用 adb：pm grant com.jietu.clustercast android.permission.CAMERA）");
+                requestPermissions(new String[]{android.Manifest.permission.CAMERA}, REQ_CAM);
                 return;
             }
+            camStatus("已授权，枚举相机…");
             CameraManager cm = (CameraManager) getSystemService(CAMERA_SERVICE);
             String[] ids = cm.getCameraIdList();
-            if (ids.length == 0) return;
+            if (ids.length == 0) { camStatus("无任何相机（getCameraIdList 为空）"); return; }
+            StringBuilder list = new StringBuilder();
             String camId = ids[0];
+            Integer chosenFacing = null;
             for (String id : ids) {
+                Integer facing = null;
                 try {
-                    CameraCharacteristics cc = cm.getCameraCharacteristics(id);
-                    Integer facing = cc.get(CameraCharacteristics.LENS_FACING);
-                    if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
-                        camId = id;
-                        break;
-                    }
+                    facing = cm.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING);
                 } catch (Throwable ignored) { }
+                list.append(id).append('=')
+                    .append(facing == null ? "?" : facing == 0 ? "BACK" : facing == 1 ? "FRONT" : "EXT")
+                    .append(' ');
+                if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
+                    camId = id;
+                    chosenFacing = facing;
+                }
             }
+            camStatus("相机列表[" + ids.length + "]: " + list + "，打开 " + camId
+                    + (chosenFacing != null ? "(BACK)" : "(首个)"));
             cm.openCamera(camId, new CameraDevice.StateCallback() {
                 @Override public void onOpened(CameraDevice cam) {
                     dashcamCamera = cam;
+                    camStatus("已打开 " + cam.getId() + "，建会话…");
                     try {
                         st.setDefaultBufferSize(1280, 720);
                         Surface surface = new Surface(st);
@@ -746,16 +789,44 @@ public class MainActivity extends Activity implements CastService.LogSink {
                                         dashcamSession = session;
                                         try {
                                             session.setRepeatingRequest(req.build(), null, camHandler);
-                                        } catch (Throwable ignored) { }
+                                            camStatus("预览中 ✓");
+                                        } catch (Throwable ex) {
+                                            camStatus("setRepeatingRequest 失败: " + ex);
+                                        }
                                     }
-                                    @Override public void onConfigureFailed(CameraCaptureSession s) { }
+                                    @Override public void onConfigureFailed(CameraCaptureSession s) {
+                                        camStatus("会话配置失败 onConfigureFailed");
+                                    }
                                 }, camHandler);
-                    } catch (Throwable ignored) { }
+                    } catch (Throwable ex) {
+                        camStatus("createCaptureSession 异常: " + ex);
+                    }
                 }
-                @Override public void onDisconnected(CameraDevice cam) { cam.close(); }
-                @Override public void onError(CameraDevice cam, int error) { cam.close(); }
+                @Override public void onDisconnected(CameraDevice cam) {
+                    camStatus("相机断开 onDisconnected");
+                    cam.close();
+                }
+                @Override public void onError(CameraDevice cam, int error) {
+                    camStatus("打开失败 onError: " + camErr(error));
+                    cam.close();
+                }
             }, camHandler);
-        } catch (Throwable ignored) { }
+        } catch (Throwable ex) {
+            camStatus("openCamera 异常: " + ex);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_CAM) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                camStatus("权限已授予，重试打开…");
+                if (dashcamST != null) openDashcamCamera(dashcamST);
+            } else {
+                camStatus("用户/系统拒绝 CAMERA 权限。可用 adb 授予：adb shell pm grant com.jietu.clustercast android.permission.CAMERA");
+            }
+        }
     }
 
     private void releaseDashcamCamera() {
@@ -765,6 +836,8 @@ public class MainActivity extends Activity implements CastService.LogSink {
         } catch (Throwable ignored) { }
         if (camThread != null) {
             if (dashcamPreview != null) dashcamPreview.setSurfaceTextureListener(null);
+            dashcamST = null;
+            dashcamStatus = null;
             camThread.quitSafely();
             camThread = null;
             camHandler = null;
