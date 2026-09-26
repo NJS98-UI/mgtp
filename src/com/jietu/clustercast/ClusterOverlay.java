@@ -4,6 +4,7 @@ import android.app.ActivityManager;
 import android.app.ActivityOptions;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
@@ -171,7 +172,13 @@ public class ClusterOverlay {
 
             Context dctx = app.createDisplayContext(d);
             panel = new FrameLayout(dctx);
+            // 黑色兜底：虚拟屏内容没上来之前至少不是透明叠加导致的「黑屏」误判
+            panel.setBackgroundColor(Color.BLACK);
             surface = new SurfaceView(dctx);
+            // 关键：SurfaceView 默认在窗口 Surface 之下，overlay 窗口透明时内容看不见。
+            // setZOrderOnTop 让 Surface 浮在窗口最上层，虚拟屏画面才能透出来。
+            surface.setZOrderOnTop(true);
+            surface.getHolder().setFormat(PixelFormat.OPAQUE);
             surface.getHolder().setFixedSize(vdW, vdH);
             surface.getHolder().addCallback(new SurfaceHolder.Callback() {
                 @Override public void surfaceCreated(SurfaceHolder holder) { onSurfaceReady(); }
@@ -191,7 +198,7 @@ public class ClusterOverlay {
                             | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                             | WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR
                             | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-                    PixelFormat.TRANSLUCENT);
+                    PixelFormat.OPAQUE);
             clusterWm = (WindowManager) dctx.getSystemService(Context.WINDOW_SERVICE);
             clusterWm.addView(panel, lp);
             Log.i(TAG, "overlay attached on display " + d.getDisplayId()

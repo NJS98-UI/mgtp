@@ -1,0 +1,6 @@
+gen/
+classes/
+out/
+*.apk
+*.idsig
+debug.keystore
