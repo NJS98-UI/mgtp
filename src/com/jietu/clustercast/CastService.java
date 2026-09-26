@@ -562,6 +562,17 @@ public class CastService extends Service {
         synchronized (mLogBuf) { return mLogBuf.toString(); }
     }
 
+    /** 清空日志缓冲。 */
+    public void clearLog() {
+        synchronized (mLogBuf) { mLogBuf.setLength(0); }
+        final LogSink sink = mSink;
+        if (sink != null) {
+            mHandler.post(new Runnable() {
+                @Override public void run() { sink.onLog(""); }
+            });
+        }
+    }
+
     private void startForegroundNotice() {
         NotificationManager nm =
                 (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);

@@ -48,6 +48,18 @@ public final class Ui {
     public static final int GREEN = 0xFF17B26A;      // 绿色主操作
     public static final int LINE = 0x2ED3DEE9;       // 卡片内分隔线
 
+    // ===== 深色主题（冥城投屏助手主界面） =====
+    public static final int D_BG = 0xFF0A0E14;          // 深色背景
+    public static final int D_CARD = 0xFF151A24;        // 深色卡片
+    public static final int D_BTN = 0xFF222836;         // 深色按钮
+    public static final int D_BTN_ON = 0xFF1A6FF0;      // 选中按钮（蓝）
+    public static final int D_FIELD = 0xFF0D1118;       // 日志区深色底
+    public static final int D_GREEN = 0xFF17B26A;       // 绿色按钮
+    public static final int D_DANGER = 0xFF8B2030;      // 红色按钮底
+    public static final int D_TEXT = 0xFFE8ECF1;        // 主文字
+    public static final int D_TEXT_SUB = 0xFF8B99A8;    // 次级文字
+    public static final int D_LINE = 0x22FFFFFF;        // 分隔线
+
     /**
      * 设计宽度固定 1050dp（用户指定）：density = 屏宽像素/1050。
      * 只对横屏生效 —— 手机竖着拿时屏宽很小，硬按 1050 折算会把一切放大好几倍。
@@ -154,6 +166,18 @@ public final class Ui {
         return g;
     }
 
+    /** 深色壁纸：深蓝黑渐变 + 微光斑，用于主界面深色主题。 */
+    public static Drawable darkWallpaper(Context c) {
+        GradientDrawable base = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{0xFF0A0E14, 0xFF0F1420, 0xFF0A0E14});
+        int rad = dp(c, 400f);
+        return new LayerDrawable(new Drawable[]{
+                base,
+                radial(rad, 0x1A1A6FF0, 0.15f, 0.20f),
+                radial(rad, 0x123D8BFF, 0.85f, 0.75f)});
+    }
+
     public static TextView text(Context c, int sizeDp, int color, int style, int maxLines) {
         return text(c, (float) sizeDp, color, style, maxLines);
     }
@@ -236,6 +260,38 @@ public final class Ui {
         v.setPadding(dp(c, 14), dp(c, 12), dp(c, 14), dp(c, 12));
         v.setBackground(paint(c, R_CARD, radiusDp));
         return v;
+    }
+
+    /** 深色圆角矩形背景（纯色 + 细边）。 */
+    public static Drawable darkBg(Context c, int color, int radiusDp) {
+        float r = (float) dp(c, radiusDp);
+        GradientDrawable body = new GradientDrawable();
+        body.setColor(color);
+        body.setCornerRadius(r);
+        GradientDrawable stroke = new GradientDrawable();
+        stroke.setCornerRadius(r);
+        stroke.setColor(Color.TRANSPARENT);
+        stroke.setStroke(dp(c, 1f), D_LINE);
+        return new LayerDrawable(new Drawable[]{stroke, body});
+    }
+
+    /** 深色卡片：竖向、自带内边距。 */
+    public static LinearLayout darkCard(Context c, int radiusDp) {
+        LinearLayout v = new LinearLayout(c);
+        v.setOrientation(LinearLayout.VERTICAL);
+        v.setPadding(dp(c, 12), dp(c, 10), dp(c, 12), dp(c, 10));
+        v.setBackground(darkBg(c, D_CARD, radiusDp));
+        return v;
+    }
+
+    /** 深色按钮文字。 */
+    public static TextView darkButton(Context c, String name, int sizeDp, int bgColor, int textColor) {
+        TextView b = text(c, sizeDp, textColor, Typeface.BOLD, 1);
+        b.setGravity(Gravity.CENTER);
+        b.setBackground(darkBg(c, bgColor, 10));
+        b.setPadding(dp(c, 14), dp(c, 8), dp(c, 14), dp(c, 8));
+        b.setText(name);
+        return b;
     }
 
     /** 卡片内一条细分隔线。 */
