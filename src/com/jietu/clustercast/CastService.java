@@ -258,11 +258,11 @@ public class CastService extends Service {
             return;
         }
         log("悬浮投屏失败：" + err);
-        if (mCastViaOverlay) {
-            mOverlay.teardown();
-            mCastViaOverlay = false;
-            mCastPkg = null;
-        }
+        // 无论之前是不是悬浮态，失败都要把悬浮层（含黑色 panel）从仪表屏上撤掉，
+        // 否则残留的全屏 overlay 会盖住 v13 直投上去的应用 → 看起来还是黑屏。
+        mOverlay.teardown();
+        mCastViaOverlay = false;
+        mCastPkg = null;
         log("自动改走搬屏模式（投屏期间临时禁用原车高德，退出自动恢复）");
         fallbackCast(t);
     }
@@ -284,6 +284,16 @@ public class CastService extends Service {
             mCastViaOverlay = false;
             mCastPkg = t[0];
             log("已投屏 " + label(t[0]));
+            // 部分 ROM 上 setLaunchDisplayId 后窗口没有立刻到前台，延迟一拍再搬一次确保可见。
+            final String pkg0 = t[0], cls0 = t[1];
+            mWork.postDelayed(new Runnable() {
+                @Override public void run() {
+                    if (mCastPkg != null && mCastPkg.equals(pkg0) && !mCastViaOverlay) {
+                        String e = Caster.startOnDisplay(CastService.this, pkg0, cls0, Caster.CLUSTER, true);
+                        if (e != null) log("二次置顶失败：" + e);
+                    }
+                }
+            }, 800);
         } else {
             log("投屏失败 " + label(t[0]) + "：" + err);
             log("仪表屏状态：" + Caster.describeDisplays(this));

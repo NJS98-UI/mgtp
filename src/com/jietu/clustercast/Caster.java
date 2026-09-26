@@ -64,7 +64,8 @@ public final class Caster {
             Intent it = new Intent(Intent.ACTION_MAIN);
             it.setClassName(pkg, cls);
             int flags = Intent.FLAG_ACTIVITY_NEW_TASK |
-                    Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED;
+                    Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED |
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP;
             if (!own) flags = flags | Intent.FLAG_ACTIVITY_MULTIPLE_TASK;
             it.addFlags(flags);
             ActivityOptions opts = ActivityOptions.makeBasic();

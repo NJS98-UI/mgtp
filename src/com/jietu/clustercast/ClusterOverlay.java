@@ -223,8 +223,21 @@ public class ClusterOverlay {
                             | DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
                             | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY);
             if (vd == null) { failPending("虚拟屏创建失败"); return; }
-            vdId = vd.getDisplay().getDisplayId();
-            Log.i(TAG, "virtual display " + vdId + " ready");
+            Display vdDisplay = vd.getDisplay();
+            vdId = vdDisplay.getDisplayId();
+            int vdFlags = vdDisplay.getFlags();
+            // 公开虚拟屏才有 FLAG_PRESENTATION；第三方应用没有 CAPTURE_VIDEO_OUTPUT 权限时，
+            // ROM 会静默把虚拟屏降为私有屏，别的应用启动上去也无法渲染 → 黑屏。
+            // 检测到私有屏直接报错，让服务降级到 v13 直投物理仪表屏。
+            boolean isPublic = (vdFlags & Display.FLAG_PRESENTATION) != 0;
+            Log.i(TAG, "virtual display " + vdId + " flags=0x"
+                    + Integer.toHexString(vdFlags) + " public=" + isPublic);
+            if (!isPublic) {
+                try { vd.release(); } catch (Throwable ignored) {}
+                vd = null; vdId = -1;
+                failPending("虚拟屏为私有屏（系统未授予公开虚拟屏权限），第三方应用无法渲染，将降级直投仪表屏");
+                return;
+            }
 
             if (pendingPkg != null) {
                 String p = pendingPkg, c = pendingCls;
