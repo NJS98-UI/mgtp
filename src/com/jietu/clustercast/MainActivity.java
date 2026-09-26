@@ -2,15 +2,25 @@ package com.jietu.clustercast;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.graphics.SurfaceTexture;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
+import android.hardware.camera2.CameraCaptureSession;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraDevice;
+import android.hardware.camera2.CameraManager;
+import android.hardware.camera2.CaptureRequest;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
 import android.provider.Settings;
 import android.text.method.ScrollingMovementMethod;
 import android.view.Gravity;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -32,8 +42,8 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * 主屏设置页 —— 深色主题。
- * 布局：左侧应用网格（4 列，上图标下名称），右侧侧边栏（标题、投屏按钮、设置、日志）。
+ * 主界面 —— 深色主题。
+ * 布局：上方左右等宽（侧边栏 + 内容区），下方导航栏（投屏/空调/盲区/记录仪）。
  */
 public class MainActivity extends Activity implements CastService.LogSink {
 
@@ -47,6 +57,19 @@ public class MainActivity extends Activity implements CastService.LogSink {
     private FrameLayout rightPanel;
     private List<ResolveInfo> allApps = new ArrayList<>();
 
+    // 导航栏
+    private LinearLayout navBar;
+    private final List<TextView> navTabs = new ArrayList<>();
+    private int currentTab = 0; // 0=投屏, 1=空调, 2=盲区, 3=记录仪
+
+    // 记录仪
+    private TextureView dashcamPreview;
+    private CameraDevice dashcamCamera;
+    private CameraCaptureSession dashcamSession;
+    private HandlerThread camThread;
+    private Handler camHandler;
+    private boolean camInited = false;
+
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
         @Override public void run() {
@@ -59,7 +82,6 @@ public class MainActivity extends Activity implements CastService.LogSink {
     @Override protected void onCreate(Bundle b) {
         Ui.fit1050(this);
         super.onCreate(b);
-        // 全屏：透明状态栏/导航栏 + 隐藏系统栏，避免底部白条
         getWindow().setFlags(
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
@@ -108,6 +130,11 @@ public class MainActivity extends Activity implements CastService.LogSink {
         sinkBound = false;
     }
 
+    @Override protected void onDestroy() {
+        releaseDashcamCamera();
+        super.onDestroy();
+    }
+
     @Override public void onBackPressed() {
         if (inSettings) {
             closeSettingsOverlay();
@@ -119,12 +146,18 @@ public class MainActivity extends Activity implements CastService.LogSink {
     // ---------- 构建 ----------
 
     private View buildUi() {
-        // 根：横向分栏，左 = 侧边栏，右 = 应用网格
+        // 根：纵向（内容区 + 底部导航栏）
         LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.HORIZONTAL);
+        root.setOrientation(LinearLayout.VERTICAL);
         root.setBackground(Ui.darkWallpaper(this));
         int pad = Ui.dp(this, 12);
         root.setPadding(pad, pad, pad, pad);
+
+        // ===== 内容行：左 + 右等宽 =====
+        LinearLayout contentRow = new LinearLayout(this);
+        contentRow.setOrientation(LinearLayout.HORIZONTAL);
+        root.addView(contentRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         // ===== 左侧：侧边栏 =====
         LinearLayout left = new LinearLayout(this);
@@ -132,26 +165,22 @@ public class MainActivity extends Activity implements CastService.LogSink {
         left.setBackground(Ui.darkBg(this, Ui.D_CARD, 12));
         int rpad = Ui.dp(this, 12);
         left.setPadding(rpad, rpad, rpad, rpad);
-        root.addView(left, Ui.weighted(1f, ViewGroup.LayoutParams.MATCH_PARENT));
+        contentRow.addView(left, Ui.weighted(1f, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // 标题
         TextView title = Ui.text(this, 20, Ui.D_TEXT, Typeface.BOLD, 1);
         title.setText("冥城投屏助手");
         left.addView(title, Ui.lw());
         left.addView(vsp(4));
 
-        // 应用数量
         tvAppCount = Ui.text(this, 12, Ui.D_TEXT_SUB, Typeface.NORMAL, 1);
         tvAppCount.setText("应用列表  共 " + allApps.size() + " 个应用");
         left.addView(tvAppCount, Ui.lw());
         left.addView(vsp(10));
 
-        // 状态文字
         tvStatus = Ui.text(this, 12, Ui.D_TEXT_SUB, Typeface.NORMAL, 2);
         left.addView(tvStatus, Ui.lw());
         left.addView(vsp(10));
 
-        // 开始投屏按钮（绿色）
         TextView btnCast = Ui.darkButton(this, "开始投屏", 15, Ui.D_GREEN, 0xFFFFFFFF);
         Ui.click(btnCast, new Runnable() {
             @Override public void run() {
@@ -163,7 +192,6 @@ public class MainActivity extends Activity implements CastService.LogSink {
         left.addView(btnCast, Ui.lw());
         left.addView(vsp(8));
 
-        // 结束投屏按钮（红色）
         TextView btnExit = Ui.darkButton(this, "结束投屏", 15, Ui.D_DANGER, 0xFFFFFFFF);
         Ui.click(btnExit, new Runnable() {
             @Override public void run() {
@@ -175,7 +203,6 @@ public class MainActivity extends Activity implements CastService.LogSink {
         left.addView(btnExit, Ui.lw());
         left.addView(vsp(8));
 
-        // 设置按钮
         TextView btnSettings = Ui.darkButton(this, "⚙ 设置", 14, Ui.D_BTN, Ui.D_TEXT);
         Ui.click(btnSettings, new Runnable() {
             @Override public void run() { showSettingsOverlay(); }
@@ -183,7 +210,6 @@ public class MainActivity extends Activity implements CastService.LogSink {
         left.addView(btnSettings, Ui.lw());
         left.addView(vsp(12));
 
-        // 日志区标题行
         LinearLayout logHead = new LinearLayout(this);
         logHead.setOrientation(LinearLayout.HORIZONTAL);
         logHead.setGravity(Gravity.CENTER_VERTICAL);
@@ -202,7 +228,6 @@ public class MainActivity extends Activity implements CastService.LogSink {
         left.addView(logHead, Ui.lw());
         left.addView(vsp(6));
 
-        // 日志区
         svLog = new ScrollView(this);
         svLog.setFillViewport(true);
         svLog.setBackground(Ui.darkBg(this, Ui.D_FIELD, 8));
@@ -215,11 +240,11 @@ public class MainActivity extends Activity implements CastService.LogSink {
         left.addView(svLog, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        // ===== 右侧：应用网格（FrameLayout 用于覆盖设置页） =====
+        // ===== 右侧：内容区（FrameLayout 切换） =====
         rightPanel = new FrameLayout(this);
-        LinearLayout.LayoutParams rlp = Ui.weighted(2.5f, ViewGroup.LayoutParams.MATCH_PARENT);
+        LinearLayout.LayoutParams rlp = Ui.weighted(1f, ViewGroup.LayoutParams.MATCH_PARENT);
         rlp.leftMargin = Ui.dp(this, 10);
-        root.addView(rightPanel, rlp);
+        contentRow.addView(rightPanel, rlp);
 
         grid = new GridView(this);
         grid.setNumColumns(4);
@@ -240,7 +265,230 @@ public class MainActivity extends Activity implements CastService.LogSink {
         rightPanel.addView(grid, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        // ===== 底部导航栏 =====
+        navBar = new LinearLayout(this);
+        navBar.setOrientation(LinearLayout.HORIZONTAL);
+        navBar.setGravity(Gravity.CENTER);
+        navBar.setBackground(Ui.darkBg(this, Ui.D_CARD, 12));
+        int npad = Ui.dp(this, 8);
+        navBar.setPadding(npad, npad, npad, npad);
+        root.addView(navBar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(vsp(0));
+
+        String[] tabNames = {"投屏", "空调", "盲区", "记录仪"};
+        for (int i = 0; i < tabNames.length; i++) {
+            final int idx = i;
+            TextView tab = Ui.darkButton(this, tabNames[i], 14,
+                    i == currentTab ? Ui.D_BTN_ON : Ui.D_BTN,
+                    i == currentTab ? 0xFFFFFFFF : Ui.D_TEXT);
+            Ui.click(tab, new Runnable() {
+                @Override public void run() { switchTab(idx); }
+            });
+            navBar.addView(tab, Ui.weighted(1f, ViewGroup.LayoutParams.WRAP_CONTENT));
+            if (i < tabNames.length - 1) navBar.addView(hsp(8));
+            navTabs.add(tab);
+        }
+
         return root;
+    }
+
+    // ---------- 导航切换 ----------
+
+    private void switchTab(int index) {
+        currentTab = index;
+        for (int i = 0; i < navTabs.size(); i++) {
+            boolean active = (i == index);
+            navTabs.get(i).setBackground(Ui.darkBg(this, active ? Ui.D_BTN_ON : Ui.D_BTN, 10));
+            navTabs.get(i).setTextColor(active ? 0xFFFFFFFF : Ui.D_TEXT);
+        }
+        if (inSettings) closeSettingsOverlay();
+        releaseDashcamCamera();
+        rightPanel.removeAllViews();
+        switch (index) {
+            case 0:
+                rightPanel.addView(grid, new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                break;
+            case 1:
+                rightPanel.addView(buildAcPage(), new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                break;
+            case 2:
+                rightPanel.addView(buildBlindSpotPage(), new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                break;
+            case 3:
+                rightPanel.addView(buildDashcamPage(), new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                break;
+        }
+    }
+
+    // ---------- 空调页 ----------
+
+    private View buildAcPage() {
+        LinearLayout page = Ui.darkCard(this, 12);
+        page.setGravity(Gravity.CENTER);
+        TextView t = Ui.text(this, 18, Ui.D_TEXT_SUB, Typeface.NORMAL, 2);
+        t.setGravity(Gravity.CENTER);
+        t.setText("空调控制\n功能开发中…");
+        page.addView(t, Ui.lw());
+        return page;
+    }
+
+    // ---------- 盲区页 ----------
+
+    private View buildBlindSpotPage() {
+        LinearLayout page = Ui.darkCard(this, 12);
+        page.setGravity(Gravity.CENTER);
+        TextView t = Ui.text(this, 18, Ui.D_TEXT_SUB, Typeface.NORMAL, 2);
+        t.setGravity(Gravity.CENTER);
+        t.setText("盲区监控\n功能开发中…");
+        page.addView(t, Ui.lw());
+        return page;
+    }
+
+    // ---------- 记录仪页 ----------
+
+    private View buildDashcamPage() {
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setBackground(Ui.darkBg(this, Ui.D_CARD, 12));
+        int pad = Ui.dp(this, 12);
+        page.setPadding(pad, pad, pad, pad);
+
+        TextView title = Ui.text(this, 16, Ui.D_TEXT, Typeface.BOLD, 1);
+        title.setText("行车记录仪");
+        page.addView(title, Ui.lw());
+        page.addView(vsp(10));
+
+        dashcamPreview = new TextureView(this);
+        dashcamPreview.setBackground(Ui.darkBg(this, Ui.D_FIELD, 8));
+        page.addView(dashcamPreview, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        page.addView(vsp(10));
+
+        // 控制行：胶囊开关
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        controls.setGravity(Gravity.CENTER_VERTICAL);
+
+        controls.addView(makeSwitchRow("录制", false, new Runnable() {
+            @Override public void run() { toast("录制功能开发中"); }
+        }));
+        controls.addView(hsp(20));
+        controls.addView(makeSwitchRow("水印", true, new Runnable() {
+            @Override public void run() { toast("水印功能开发中"); }
+        }));
+        controls.addView(hsp(20));
+        controls.addView(makeSwitchRow("循环录制", true, new Runnable() {
+            @Override public void run() { toast("循环录制功能开发中"); }
+        }));
+        page.addView(controls, Ui.lw());
+
+        initDashcamCamera();
+        return page;
+    }
+
+    /** 一行：标签 + 胶囊开关 */
+    private View makeSwitchRow(String label, boolean on, Runnable onToggle) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView t = Ui.text(this, 13, Ui.D_TEXT, Typeface.NORMAL, 1);
+        t.setText(label);
+        row.addView(t, Ui.ww());
+        row.addView(hsp(6));
+        Ui.CapsuleSwitch sw = new Ui.CapsuleSwitch(this);
+        sw.setChecked(on);
+        sw.setOnToggle(onToggle);
+        row.addView(sw, Ui.ww());
+        return row;
+    }
+
+    // ---------- 记录仪相机 ----------
+
+    private void initDashcamCamera() {
+        if (camInited) return;
+        camThread = new HandlerThread("dashcam-cam");
+        camThread.start();
+        camHandler = new Handler(camThread.getLooper());
+        camInited = true;
+        dashcamPreview.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+            @Override public void onSurfaceTextureAvailable(SurfaceTexture st, int w, int h) {
+                openDashcamCamera(st);
+            }
+            @Override public void onSurfaceTextureSizeChanged(SurfaceTexture st, int w, int h) { }
+            @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture st) { return true; }
+            @Override public void onSurfaceTextureUpdated(SurfaceTexture st) { }
+        });
+    }
+
+    private void openDashcamCamera(final SurfaceTexture st) {
+        try {
+            if (checkSelfPermission(android.Manifest.permission.CAMERA)
+                    != PackageManager.PERMISSION_GRANTED) {
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        toast("需要摄像头权限：\nadb shell pm grant com.jietu.clustercast android.permission.CAMERA");
+                    }
+                });
+                return;
+            }
+            CameraManager cm = (CameraManager) getSystemService(CAMERA_SERVICE);
+            String[] ids = cm.getCameraIdList();
+            if (ids.length == 0) return;
+            String camId = ids[0];
+            for (String id : ids) {
+                try {
+                    CameraCharacteristics cc = cm.getCameraCharacteristics(id);
+                    Integer facing = cc.get(CameraCharacteristics.LENS_FACING);
+                    if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
+                        camId = id;
+                        break;
+                    }
+                } catch (Throwable ignored) { }
+            }
+            cm.openCamera(camId, new CameraDevice.StateCallback() {
+                @Override public void onOpened(CameraDevice cam) {
+                    dashcamCamera = cam;
+                    try {
+                        st.setDefaultBufferSize(1280, 720);
+                        Surface surface = new Surface(st);
+                        CaptureRequest.Builder req =
+                                cam.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+                        req.addTarget(surface);
+                        cam.createCaptureSession(java.util.Collections.singletonList(surface),
+                                new CameraCaptureSession.StateCallback() {
+                                    @Override public void onConfigured(CameraCaptureSession session) {
+                                        dashcamSession = session;
+                                        try {
+                                            session.setRepeatingRequest(req.build(), null, camHandler);
+                                        } catch (Throwable ignored) { }
+                                    }
+                                    @Override public void onConfigureFailed(CameraCaptureSession s) { }
+                                }, camHandler);
+                    } catch (Throwable ignored) { }
+                }
+                @Override public void onDisconnected(CameraDevice cam) { cam.close(); }
+                @Override public void onError(CameraDevice cam, int error) { cam.close(); }
+            }, camHandler);
+        } catch (Throwable ignored) { }
+    }
+
+    private void releaseDashcamCamera() {
+        try {
+            if (dashcamSession != null) { dashcamSession.close(); dashcamSession = null; }
+            if (dashcamCamera != null) { dashcamCamera.close(); dashcamCamera = null; }
+        } catch (Throwable ignored) { }
+        if (camThread != null) {
+            if (dashcamPreview != null) dashcamPreview.setSurfaceTextureListener(null);
+            camThread.quitSafely();
+            camThread = null;
+            camHandler = null;
+            camInited = false;
+        }
     }
 
     // ---------- 应用列表 ----------
@@ -267,7 +515,6 @@ public class MainActivity extends Activity implements CastService.LogSink {
         cfg.setTarget(r.activityInfo.packageName, r.activityInfo.name, name);
         if (cfg.followTop()) cfg.setFollowTop(false);
         adapter.notifyDataSetChanged();
-        // 选定后直接开始投屏，无需再点"开始投屏"
         CastService s = CastService.inst();
         if (s != null) {
             s.castNow();
@@ -277,7 +524,6 @@ public class MainActivity extends Activity implements CastService.LogSink {
         }
     }
 
-    /** 一格：图标在上、名字在下。选中的蓝色高亮。 */
     private class AppAdapter extends BaseAdapter {
         private final List<ResolveInfo> items;
         AppAdapter(List<ResolveInfo> l) { items = l; }
@@ -313,7 +559,6 @@ public class MainActivity extends Activity implements CastService.LogSink {
             boolean selected = sel != null && sel.equals(r.activityInfo.packageName);
             cell.setBackground(Ui.darkBg(MainActivity.this,
                     selected ? Ui.D_BTN_ON : Ui.D_BTN, 10));
-            // 卡片刚好放完图标和名称：宽度填满列，高度自适应
             cell.setLayoutParams(new AbsListView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -321,7 +566,7 @@ public class MainActivity extends Activity implements CastService.LogSink {
         }
     }
 
-    // ---------- 设置（覆盖到应用区，不用弹窗） ----------
+    // ---------- 设置（覆盖到右侧内容区） ----------
 
     private View settingsView = null;
     private boolean inSettings = false;
@@ -329,7 +574,6 @@ public class MainActivity extends Activity implements CastService.LogSink {
     private void showSettingsOverlay() {
         if (inSettings) return;
 
-        // 整个设置页就是一个 ScrollView，内容从顶部开始排列
         ScrollView sv = new ScrollView(this);
         sv.setBackground(Ui.darkBg(this, Ui.D_BG, 12));
         sv.setFillViewport(true);
@@ -338,7 +582,7 @@ public class MainActivity extends Activity implements CastService.LogSink {
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(Ui.dp(this, 16), Ui.dp(this, 14), Ui.dp(this, 16), Ui.dp(this, 16));
 
-        // 顶部：返回按钮 + 标题
+        // 顶部：返回 + 标题
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
@@ -354,14 +598,13 @@ public class MainActivity extends Activity implements CastService.LogSink {
         body.addView(head, Ui.lw());
         body.addView(vsp(14));
 
-        // 分割线
         View divider = new View(this);
         divider.setBackgroundColor(0xFF2A3040);
         body.addView(divider, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 1)));
         body.addView(vsp(16));
 
-        // 仪表档位
+        // 仪表档位（两选一按钮，非开关）
         TextView lblTheme = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
         lblTheme.setText("仪表档位");
         body.addView(lblTheme, Ui.lw());
@@ -398,34 +641,31 @@ public class MainActivity extends Activity implements CastService.LogSink {
         body.addView(themeRow, Ui.lw());
         body.addView(vsp(20));
 
-        // 跟随前台
+        // 跟随前台（胶囊开关）
+        LinearLayout followRow = new LinearLayout(this);
+        followRow.setOrientation(LinearLayout.HORIZONTAL);
+        followRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView lblFollow = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
         lblFollow.setText("跟随前台");
-        body.addView(lblFollow, Ui.lw());
-        body.addView(vsp(8));
-        final boolean[] follow = {cfg.followTop()};
-        final TextView btnFollow = Ui.darkButton(this,
-                follow[0] ? "跟随前台：开" : "跟随前台：关", 14,
-                follow[0] ? Ui.D_BTN_ON : Ui.D_BTN,
-                follow[0] ? 0xFFFFFFFF : Ui.D_TEXT);
-        Ui.click(btnFollow, new Runnable() {
+        followRow.addView(lblFollow, Ui.weighted(1, ViewGroup.LayoutParams.WRAP_CONTENT));
+        final Ui.CapsuleSwitch swFollow = new Ui.CapsuleSwitch(this);
+        swFollow.setChecked(cfg.followTop());
+        swFollow.setOnToggle(new Runnable() {
             @Override public void run() {
-                follow[0] = !follow[0];
-                cfg.setFollowTop(follow[0]);
-                btnFollow.setText(follow[0] ? "跟随前台：开" : "跟随前台：关");
-                btnFollow.setBackground(Ui.darkBg(MainActivity.this,
-                        follow[0] ? Ui.D_BTN_ON : Ui.D_BTN, 10));
-                btnFollow.setTextColor(follow[0] ? 0xFFFFFFFF : Ui.D_TEXT);
+                cfg.setFollowTop(swFollow.isChecked());
             }
         });
-        body.addView(btnFollow, Ui.lw());
+        followRow.addView(swFollow, Ui.ww());
+        body.addView(followRow, Ui.lw());
         body.addView(vsp(20));
 
         // 权限提示
         boolean topGranted = TopApp.granted(this);
         boolean overlayOk;
         try { overlayOk = Settings.canDrawOverlays(this); } catch (Throwable t) { overlayOk = true; }
-        if (!topGranted || !overlayOk) {
+        boolean camGranted = checkSelfPermission(android.Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED;
+        if (!topGranted || !overlayOk || !camGranted) {
             TextView lblPerm = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
             lblPerm.setText("权限");
             body.addView(lblPerm, Ui.lw());
@@ -443,13 +683,19 @@ public class MainActivity extends Activity implements CastService.LogSink {
                 op.setText("悬浮模式需要「显示在其他应用上层」权限：\n"
                         + "adb shell appops set com.jietu.clustercast SYSTEM_ALERT_WINDOW allow");
                 body.addView(op, Ui.lw());
+                body.addView(vsp(8));
+            }
+            if (!camGranted) {
+                TextView cp = Ui.text(this, 12, 0xFFFF8080, Typeface.NORMAL, 4);
+                cp.setText("「记录仪」需要摄像头权限：\n"
+                        + "adb shell pm grant com.jietu.clustercast android.permission.CAMERA");
+                body.addView(cp, Ui.lw());
             }
         }
 
         sv.addView(body, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        // 切换 rightPanel 内容：移除 grid，显示设置页
         settingsView = sv;
         rightPanel.removeAllViews();
         rightPanel.addView(sv, new FrameLayout.LayoutParams(
@@ -459,9 +705,26 @@ public class MainActivity extends Activity implements CastService.LogSink {
 
     private void closeSettingsOverlay() {
         if (!inSettings) return;
+        releaseDashcamCamera();
         rightPanel.removeAllViews();
-        rightPanel.addView(grid, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        switch (currentTab) {
+            case 0:
+                rightPanel.addView(grid, new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                break;
+            case 1:
+                rightPanel.addView(buildAcPage(), new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                break;
+            case 2:
+                rightPanel.addView(buildBlindSpotPage(), new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                break;
+            case 3:
+                rightPanel.addView(buildDashcamPage(), new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                break;
+        }
         settingsView = null;
         inSettings = false;
     }
