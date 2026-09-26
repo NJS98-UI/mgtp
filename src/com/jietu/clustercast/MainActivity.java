@@ -70,6 +70,14 @@ public class MainActivity extends Activity implements CastService.LogSink {
     private Handler camHandler;
     private boolean camInited = false;
 
+    // 空调页回读显示
+    private TextView tvHvacDriverTemp;
+    private TextView tvHvacCopilotTemp;
+    private TextView tvHvacFan;
+    private int hvacDriverTemp = 22;
+    private int hvacCopilotTemp = 22;
+    private int hvacFan = 3;
+
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
         @Override public void run() {
@@ -318,23 +326,7 @@ public class MainActivity extends Activity implements CastService.LogSink {
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 break;
             case 3:
-                // 记录仪：启动 EVCam MainActivity
-                try {
-                    Intent evcam = new Intent();
-                    evcam.setClassName("com.jietu.clustercast", "com.kooo.evcam.MainActivity");
-                    evcam.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(evcam);
-                } catch (Throwable e) {
-                    toast("记录仪启动失败：" + e.getMessage());
-                }
-                // 切回投屏 tab（不留在空页面）
-                currentTab = 0;
-                for (int i = 0; i < navTabs.size(); i++) {
-                    boolean active = (i == 0);
-                    navTabs.get(i).setBackground(Ui.darkBg(this, active ? Ui.D_BTN_ON : Ui.D_BTN, 10));
-                    navTabs.get(i).setTextColor(active ? 0xFFFFFFFF : Ui.D_TEXT);
-                }
-                rightPanel.addView(grid, new FrameLayout.LayoutParams(
+                rightPanel.addView(buildDashcamPage(), new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 break;
         }
@@ -355,13 +347,275 @@ public class MainActivity extends Activity implements CastService.LogSink {
     // ---------- 空调页 ----------
 
     private View buildAcPage() {
-        LinearLayout page = Ui.darkCard(this, 12);
-        page.setGravity(Gravity.CENTER);
-        TextView t = Ui.text(this, 18, Ui.D_TEXT_SUB, Typeface.NORMAL, 2);
-        t.setGravity(Gravity.CENTER);
-        t.setText("空调控制\n功能开发中…");
-        page.addView(t, Ui.lw());
-        return page;
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        sv.setBackground(Ui.darkBg(this, Ui.D_CARD, 12));
+
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        int pad = Ui.dp(this, 12);
+        page.setPadding(pad, pad, pad, pad);
+
+        TextView title = Ui.text(this, 16, Ui.D_TEXT, Typeface.BOLD, 1);
+        title.setText("空调");
+        page.addView(title, Ui.lw());
+        page.addView(vsp(8));
+
+        LinearLayout hvacRow = new LinearLayout(this);
+        hvacRow.setOrientation(LinearLayout.HORIZONTAL);
+        hvacRow.addView(hvacBtn("电源", new Runnable() {
+            @Override public void run() { vdHvac(Vd.HVAC_STATE, 2); }
+        }));
+        hvacRow.addView(hsp(8));
+        hvacRow.addView(hvacBtn("AUTO", new Runnable() {
+            @Override public void run() { vdHvac(Vd.HVAC_AUTO, 2); }
+        }));
+        hvacRow.addView(hsp(8));
+        hvacRow.addView(hvacBtn("双区", new Runnable() {
+            @Override public void run() { vdHvac(Vd.HVAC_DUAL, 2); }
+        }));
+        hvacRow.addView(hsp(8));
+        hvacRow.addView(hvacBtn("内循环", new Runnable() {
+            @Override public void run() { vdHvac(Vd.HVAC_CIRC, 2); }
+        }));
+        page.addView(hvacRow, Ui.lw());
+        page.addView(vsp(8));
+
+        LinearLayout defrostRow = new LinearLayout(this);
+        defrostRow.setOrientation(LinearLayout.HORIZONTAL);
+        defrostRow.addView(hvacBtn("前除霜", new Runnable() {
+            @Override public void run() { vdHvac(Vd.HVAC_FRONT_DEFROST, 2); }
+        }));
+        defrostRow.addView(hsp(8));
+        defrostRow.addView(hvacBtn("后除霜", new Runnable() {
+            @Override public void run() { vdHvac(Vd.HVAC_REAR_DEFROST, 2); }
+        }));
+        defrostRow.addView(hsp(8));
+        defrostRow.addView(hvacBtn("关空调", new Runnable() {
+            @Override public void run() { vdHvac(Vd.HVAC_STATE, 1); }
+        }));
+        page.addView(defrostRow, Ui.lw());
+        page.addView(vsp(12));
+
+        tvHvacDriverTemp = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
+        tvHvacDriverTemp.setGravity(Gravity.CENTER);
+        tvHvacCopilotTemp = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
+        tvHvacCopilotTemp.setGravity(Gravity.CENTER);
+        tvHvacFan = Ui.text(this, 14, Ui.D_TEXT, Typeface.BOLD, 1);
+        tvHvacFan.setGravity(Gravity.CENTER);
+        refreshHvacLabels();
+
+        page.addView(stepperRow("主驾温度", tvHvacDriverTemp, new Runnable() {
+            @Override public void run() {
+                hvacDriverTemp = clamp(hvacDriverTemp - 1, 16, 32);
+                vdHvac(Vd.HVAC_TEMP_DRIVER, hvacDriverTemp);
+                refreshHvacLabels();
+            }
+        }, new Runnable() {
+            @Override public void run() {
+                hvacDriverTemp = clamp(hvacDriverTemp + 1, 16, 32);
+                vdHvac(Vd.HVAC_TEMP_DRIVER, hvacDriverTemp);
+                refreshHvacLabels();
+            }
+        }), Ui.lw());
+        page.addView(vsp(8));
+        page.addView(stepperRow("副驾温度", tvHvacCopilotTemp, new Runnable() {
+            @Override public void run() {
+                hvacCopilotTemp = clamp(hvacCopilotTemp - 1, 16, 32);
+                vdHvac(Vd.HVAC_TEMP_COPILOT, hvacCopilotTemp);
+                refreshHvacLabels();
+            }
+        }, new Runnable() {
+            @Override public void run() {
+                hvacCopilotTemp = clamp(hvacCopilotTemp + 1, 16, 32);
+                vdHvac(Vd.HVAC_TEMP_COPILOT, hvacCopilotTemp);
+                refreshHvacLabels();
+            }
+        }), Ui.lw());
+        page.addView(vsp(8));
+        page.addView(stepperRow("风速", tvHvacFan, new Runnable() {
+            @Override public void run() {
+                hvacFan = clamp(hvacFan - 1, 1, 8);
+                vdHvac(Vd.HVAC_FAN, hvacFan);
+                refreshHvacLabels();
+            }
+        }, new Runnable() {
+            @Override public void run() {
+                hvacFan = clamp(hvacFan + 1, 1, 8);
+                vdHvac(Vd.HVAC_FAN, hvacFan);
+                refreshHvacLabels();
+            }
+        }), Ui.lw());
+
+        page.addView(vsp(16));
+        TextView winTitle = Ui.text(this, 16, Ui.D_TEXT, Typeface.BOLD, 1);
+        winTitle.setText("车窗");
+        page.addView(winTitle, Ui.lw());
+        page.addView(vsp(8));
+
+        LinearLayout winAll = new LinearLayout(this);
+        winAll.setOrientation(LinearLayout.HORIZONTAL);
+        winAll.addView(hvacBtn("全车升起", new Runnable() {
+            @Override public void run() { vdWindow(Vd.WIN_ALL, Vd.WIN_UP); }
+        }));
+        winAll.addView(hsp(8));
+        winAll.addView(hvacBtn("全车降下", new Runnable() {
+            @Override public void run() { vdWindow(Vd.WIN_ALL, Vd.WIN_DOWN); }
+        }));
+        page.addView(winAll, Ui.lw());
+        page.addView(vsp(8));
+
+        page.addView(windowRow("主驾", Vd.WIN_FL), Ui.lw());
+        page.addView(vsp(6));
+        page.addView(windowRow("副驾", Vd.WIN_FR), Ui.lw());
+        page.addView(vsp(6));
+        page.addView(windowRow("左后", Vd.WIN_RL), Ui.lw());
+        page.addView(vsp(6));
+        page.addView(windowRow("右后", Vd.WIN_RR), Ui.lw());
+
+        page.addView(vsp(16));
+        TextView tailTitle = Ui.text(this, 16, Ui.D_TEXT, Typeface.BOLD, 1);
+        tailTitle.setText("尾门");
+        page.addView(tailTitle, Ui.lw());
+        page.addView(vsp(8));
+        LinearLayout tailRow = new LinearLayout(this);
+        tailRow.setOrientation(LinearLayout.HORIZONTAL);
+        tailRow.addView(hvacBtn("打开尾门", new Runnable() {
+            @Override public void run() { vdTail(Vd.TAIL_OPEN); }
+        }));
+        tailRow.addView(hsp(8));
+        tailRow.addView(hvacBtn("关闭尾门", new Runnable() {
+            @Override public void run() { vdTail(Vd.TAIL_CLOSE); }
+        }));
+        page.addView(tailRow, Ui.lw());
+
+        sv.addView(page, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        pullHvacState();
+        return sv;
+    }
+
+    private View hvacBtn(String name, Runnable action) {
+        TextView b = Ui.darkButton(this, name, 13, Ui.D_BTN, Ui.D_TEXT);
+        Ui.click(b, action);
+        LinearLayout.LayoutParams lp = Ui.weighted(1f, ViewGroup.LayoutParams.WRAP_CONTENT);
+        b.setLayoutParams(lp);
+        return b;
+    }
+
+    private View stepperRow(String label, TextView valueTv, Runnable minus, Runnable plus) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView t = Ui.text(this, 13, Ui.D_TEXT, Typeface.NORMAL, 1);
+        t.setText(label);
+        row.addView(t, Ui.weighted(1f, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView btnMinus = Ui.darkButton(this, "－", 16, Ui.D_BTN, Ui.D_TEXT);
+        Ui.click(btnMinus, minus);
+        row.addView(btnMinus, Ui.ww());
+        row.addView(hsp(8));
+        row.addView(valueTv, Ui.ww());
+        row.addView(hsp(8));
+        TextView btnPlus = Ui.darkButton(this, "＋", 16, Ui.D_BTN, Ui.D_TEXT);
+        Ui.click(btnPlus, plus);
+        row.addView(btnPlus, Ui.ww());
+        return row;
+    }
+
+    private View windowRow(String name, final int win) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView t = Ui.text(this, 13, Ui.D_TEXT, Typeface.NORMAL, 1);
+        t.setText(name);
+        row.addView(t, Ui.weighted(1f, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView up = Ui.darkButton(this, "升起", 13, Ui.D_BTN, Ui.D_TEXT);
+        Ui.click(up, new Runnable() {
+            @Override public void run() { vdWindow(win, Vd.WIN_UP); }
+        });
+        row.addView(up, Ui.ww());
+        row.addView(hsp(8));
+        TextView down = Ui.darkButton(this, "降下", 13, Ui.D_BTN, Ui.D_TEXT);
+        Ui.click(down, new Runnable() {
+            @Override public void run() { vdWindow(win, Vd.WIN_DOWN); }
+        });
+        row.addView(down, Ui.ww());
+        return row;
+    }
+
+    private void refreshHvacLabels() {
+        if (tvHvacDriverTemp != null) tvHvacDriverTemp.setText(hvacDriverTemp + "℃");
+        if (tvHvacCopilotTemp != null) tvHvacCopilotTemp.setText(hvacCopilotTemp + "℃");
+        if (tvHvacFan != null) tvHvacFan.setText(String.valueOf(hvacFan));
+    }
+
+    private static int clamp(int v, int lo, int hi) {
+        return v < lo ? lo : (v > hi ? hi : v);
+    }
+
+    private void vdHvac(final int cmd, final int value) {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                Vd v = Vd.connect(MainActivity.this);
+                if (v == null || !v.ok()) {
+                    ui.post(new Runnable() {
+                        @Override public void run() { toast("空调总线未连接：" + (v == null ? "null" : v.lastError)); }
+                    });
+                    return;
+                }
+                v.setHvac(cmd, value);
+            }
+        }, "vd-hvac").start();
+    }
+
+    private void vdWindow(final int window, final int action) {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                Vd v = Vd.connect(MainActivity.this);
+                if (v == null || !v.ok()) {
+                    ui.post(new Runnable() {
+                        @Override public void run() { toast("车窗总线未连接：" + (v == null ? "null" : v.lastError)); }
+                    });
+                    return;
+                }
+                v.setWindow(window, action);
+            }
+        }, "vd-win").start();
+    }
+
+    private void vdTail(final int action) {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                Vd v = Vd.connect(MainActivity.this);
+                if (v == null || !v.ok()) {
+                    ui.post(new Runnable() {
+                        @Override public void run() { toast("尾门总线未连接：" + (v == null ? "null" : v.lastError)); }
+                    });
+                    return;
+                }
+                v.setTailgate(action);
+            }
+        }, "vd-tail").start();
+    }
+
+    private void pullHvacState() {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                Vd v = Vd.connect(MainActivity.this);
+                if (v == null || !v.ok()) return;
+                final int d = v.getHvac(Vd.HVAC_TEMP_DRIVER);
+                final int c = v.getHvac(Vd.HVAC_TEMP_COPILOT);
+                final int f = v.getHvac(Vd.HVAC_FAN);
+                ui.post(new Runnable() {
+                    @Override public void run() {
+                        if (d >= 16 && d <= 32) hvacDriverTemp = d;
+                        if (c >= 16 && c <= 32) hvacCopilotTemp = c;
+                        if (f >= 1 && f <= 8) hvacFan = f;
+                        refreshHvacLabels();
+                    }
+                });
+            }
+        }, "vd-hvac-get").start();
     }
 
     // ---------- 盲区页 ----------
